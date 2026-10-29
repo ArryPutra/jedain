@@ -2,6 +2,7 @@ package com.example.jedain
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +26,6 @@ import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.outlined.DarkMode
@@ -56,7 +56,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -157,6 +159,10 @@ fun MainScreen(
                         initialSettings = targetSettings,
                         onBackClick = {
                             currentScreen = JedaInScreen.HOME
+                        },
+                        onTargetSettingsChanged = { updatedSettings ->
+                            preferences.saveSettings(updatedSettings)
+                            targetSettings = updatedSettings
                         },
                         onSaveSettings = { newSettings ->
                             preferences.saveSettings(newSettings)
@@ -309,7 +315,7 @@ fun FixedHeaderSection(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.weight(1f),
                 ) {
-                    // Monochrome Leaf Logo inside a rounded square
+                    // App Logo with custom drawable inside a rounded square
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = colors.surface,
@@ -317,12 +323,21 @@ fun FixedHeaderSection(
                         modifier = Modifier.size(42.dp),
                         shadowElevation = 0.dp,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Eco,
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp),
+                        ) {
+                            Image(
+                                painter = painterResource(
+                                    id = if (isDarkTheme) R.drawable.dark_logo else R.drawable.logo,
+                                ),
                                 contentDescription = "Logo JedaIn",
-                                tint = colors.textPrimary,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(10.dp)),
+                                contentScale = ContentScale.Fit,
                             )
                         }
                     }
