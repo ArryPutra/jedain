@@ -22,6 +22,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
@@ -29,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.LightMode
@@ -43,6 +49,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -117,10 +124,23 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    var activityPrompt by remember {
+        mutableStateOf(
+            DailyActivityPromptProvider.getNextPrompt(
+                currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
+            )
+        )
+    }
+
     DisposableEffect(lifecycleOwner, monitoredAppsViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 monitoredAppsViewModel.refreshPermissionsAndUsage()
+                val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
+                activityPrompt = DailyActivityPromptProvider.getNextPrompt(
+                    currentHour = currentHour,
+                    excludeId = activityPrompt.id
+                )
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -162,11 +182,24 @@ fun MainScreen(
                         onToggleDarkTheme = {
                             isDarkThemeUserOverride = !isDarkTheme
                         },
+                        activityPrompt = activityPrompt,
+                        onNextPromptClick = {
+                            val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
+                            activityPrompt = DailyActivityPromptProvider.getNextPrompt(
+                                currentHour = currentHour,
+                                excludeId = activityPrompt.id
+                            )
+                        },
                         onTargetSettingsClick = {
                             currentScreen = JedaInScreen.SET_TARGET
                         },
                         onManageAppsClick = {
                             currentScreen = JedaInScreen.MANAGE_APPS
+                        },
+                        onShowSnackbar = { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
                         },
                         modifier = Modifier.padding(innerPadding),
                     )
@@ -217,10 +250,30 @@ fun HomeScreen(
     isDarkTheme: Boolean,
     onToggleDarkTheme: () -> Unit,
     modifier: Modifier = Modifier,
+    activityPrompt: ActivityPrompt = remember {
+        DailyActivityPromptProvider.getNextPrompt(DailyActivityPromptProvider.getCurrentLocalHour())
+    },
+    onNextPromptClick: () -> Unit = {},
     onTargetSettingsClick: () -> Unit = {},
     onManageAppsClick: () -> Unit = {},
+    onShowSnackbar: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+
+    val onAppClick: (String) -> Unit = { packageName ->
+        try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+            } else {
+                onShowSnackbar("Aplikasi tidak dapat dibuka. Pastikan aplikasi masih terpasang.")
+            }
+        } catch (_: Exception) {
+            onShowSnackbar("Aplikasi tidak dapat dibuka. Pastikan aplikasi masih terpasang.")
+        }
+    }
+
     val scrollState = rememberScrollState()
     val isScrolled = scrollState.canScrollBackward
     var pendingDisclosurePermission by rememberSaveable {
@@ -344,8 +397,12 @@ fun HomeScreen(
                     .padding(horizontal = 20.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                // Sapaan dan Tanggal
-                GreetingSection(dateText = dateText)
+                // Sapaan dan Tanggal dengan Ide Kegiatan Nyata
+                GreetingSection(
+                    dateText = dateText,
+                    prompt = activityPrompt,
+                    onNextPromptClick = onNextPromptClick,
+                )
 
                 // Kartu Status Izin Sistem (otomatis tersembunyi jika kedua izin sudah aktif)
                 if (!monitoredAppsUiState.hasUsageAccessPermission || !monitoredAppsUiState.hasOverlayPermission) {
@@ -374,6 +431,7 @@ fun HomeScreen(
                 MonitoredAppsSection(
                     uiState = monitoredAppsUiState,
                     onManageAppsClick = onManageAppsClick,
+                    onAppClick = onAppClick,
                 )
 
                 // Kartu Bubble Mengambang dengan Switch
@@ -780,28 +838,106 @@ fun FixedHeaderSection(
 @Composable
 fun GreetingSection(
     dateText: String,
+    prompt: ActivityPrompt,
+    onNextPromptClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = JedaInTheme.colors
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = dateText,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            color = colors.textSecondary,
-            letterSpacing = 0.1.sp,
-        )
-        Text(
-            text = "Halo, selamat datang.",
-            fontSize = 25.sp,
-            fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
-            letterSpacing = (-0.5).sp,
-        )
+        // A. Baris atas: Tanggal di kiri, Tombol ganti ide berbentuk pill di kanan
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = dateText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = colors.textSecondary,
+                letterSpacing = 0.1.sp,
+            )
+
+            Surface(
+                onClick = onNextPromptClick,
+                shape = CircleShape,
+                color = colors.surface,
+                border = BorderStroke(1.dp, colors.border),
+                shadowElevation = 0.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Ide kegiatan lain",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = "Ide kegiatan lain",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+        }
+
+        // B, C, D. AnimatedContent untuk pergantian ide kegiatan
+        AnimatedContent(
+            targetState = prompt,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(150))
+            },
+            label = "GreetingPromptAnimation",
+        ) { targetPrompt ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // B. Badge kategori
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.border),
+                    shadowElevation = 0.dp,
+                ) {
+                    Text(
+                        text = targetPrompt.category.label,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+
+                // C. Headline
+                Text(
+                    text = targetPrompt.headline,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 27.sp,
+                    color = colors.textPrimary,
+                    letterSpacing = (-0.3).sp,
+                )
+
+                // D. Subtitle
+                Text(
+                    text = targetPrompt.subtitle,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                    lineHeight = 18.sp,
+                    color = colors.textSecondary,
+                )
+            }
+        }
     }
 }
 
@@ -1216,6 +1352,7 @@ fun MonitoredAppsSection(
     uiState: MonitoredAppsUiState,
     onManageAppsClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onAppClick: (String) -> Unit = {},
 ) {
     val colors = JedaInTheme.colors
     // Urutkan aplikasi yang dipantau dari durasi pemakaian tertinggi hari ini
@@ -1302,7 +1439,10 @@ fun MonitoredAppsSection(
                 else -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         activeMonitoredApps.forEachIndexed { index, app ->
-                            MonitoredAppRow(item = app)
+                            MonitoredAppRow(
+                                item = app,
+                                onClick = { onAppClick(app.packageName) },
+                            )
                             if (index < activeMonitoredApps.lastIndex) {
                                 HorizontalDivider(
                                     color = colors.divider,
@@ -1349,6 +1489,7 @@ fun MonitoredAppsSection(
 @Composable
 private fun MonitoredAppRow(
     item: MonitoredAppModel,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = JedaInTheme.colors
@@ -1356,6 +1497,7 @@ private fun MonitoredAppRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
