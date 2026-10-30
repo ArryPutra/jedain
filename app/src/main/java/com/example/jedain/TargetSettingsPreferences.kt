@@ -5,6 +5,7 @@ import androidx.compose.runtime.Immutable
 import androidx.core.content.edit
 
 val PresetDailyTargetMinutes = listOf(30, 60, 120, 180)
+val PresetSessionDurationMinutes = listOf(5, 10, 15, 20, 30)
 
 fun validateDailyTargetMinutes(minutes: Int): Int {
     val clamped = minutes.coerceIn(
@@ -16,6 +17,13 @@ fun validateDailyTargetMinutes(minutes: Int): Int {
     return snapped.coerceIn(
         TargetSettingsPreferences.MIN_DAILY_TARGET_MINUTES,
         TargetSettingsPreferences.MAX_DAILY_TARGET_MINUTES,
+    )
+}
+
+fun validateSessionDurationMinutes(minutes: Int): Int {
+    return minutes.coerceIn(
+        TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES,
+        TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES,
     )
 }
 
@@ -40,6 +48,12 @@ data class TargetSettingsState(
         TargetSettingsPreferences.DEFAULT_CUSTOM_DAILY_TARGET_MINUTES
     },
     val sessionDurationMinutes: Int = TargetSettingsPreferences.DEFAULT_SESSION_MINUTES,
+    val isCustomSessionDuration: Boolean = sessionDurationMinutes !in PresetSessionDurationMinutes,
+    val customSessionDurationMinutes: Int = if (sessionDurationMinutes !in PresetSessionDurationMinutes) {
+        validateSessionDurationMinutes(sessionDurationMinutes)
+    } else {
+        TargetSettingsPreferences.DEFAULT_CUSTOM_SESSION_MINUTES
+    },
     val reminderOnSessionEnd: Boolean = TargetSettingsPreferences.DEFAULT_REMINDER_ENABLED,
 ) {
     val validatedDailyTargetMinutes: Int
@@ -50,6 +64,12 @@ data class TargetSettingsState(
 
     val dailyTargetHours: Int
         get() = (validatedDailyTargetMinutes / 60).coerceIn(1, 4)
+
+    val validatedSessionDurationMinutes: Int
+        get() = validateSessionDurationMinutes(sessionDurationMinutes)
+
+    val validatedCustomSessionDurationMinutes: Int
+        get() = validateSessionDurationMinutes(customSessionDurationMinutes)
 }
 
 class TargetSettingsPreferences(context: Context) {
@@ -80,11 +100,34 @@ class TargetSettingsPreferences(context: Context) {
             validateDailyTargetMinutes(rawCustomMinutes)
         }
 
+        val rawSessionMinutes = prefs.getInt(KEY_SESSION_DURATION_MINUTES, DEFAULT_SESSION_MINUTES)
+        val validatedSessionMinutes = validateSessionDurationMinutes(rawSessionMinutes)
+
+        val isCustomSession = if (prefs.contains(KEY_IS_CUSTOM_SESSION_DURATION)) {
+            prefs.getBoolean(KEY_IS_CUSTOM_SESSION_DURATION, false)
+        } else {
+            validatedSessionMinutes !in PresetSessionDurationMinutes
+        }
+
+        val rawCustomSessionMinutes = prefs.getInt(
+            KEY_CUSTOM_SESSION_DURATION_MINUTES,
+            if (isCustomSession) validatedSessionMinutes else DEFAULT_CUSTOM_SESSION_MINUTES,
+        )
+        val validatedCustomSessionMinutes = validateSessionDurationMinutes(rawCustomSessionMinutes)
+
+        val activeSessionDurationMinutes = if (isCustomSession) {
+            validatedCustomSessionMinutes
+        } else {
+            validatedSessionMinutes
+        }
+
         return TargetSettingsState(
             dailyTargetMinutes = validatedMinutes,
             isCustomDailyTarget = isCustom,
             customDailyTargetMinutes = validatedCustomMinutes,
-            sessionDurationMinutes = prefs.getInt(KEY_SESSION_DURATION_MINUTES, DEFAULT_SESSION_MINUTES),
+            sessionDurationMinutes = activeSessionDurationMinutes,
+            isCustomSessionDuration = isCustomSession,
+            customSessionDurationMinutes = validatedCustomSessionMinutes,
             reminderOnSessionEnd = prefs.getBoolean(KEY_REMINDER_ON_SESSION_END, DEFAULT_REMINDER_ENABLED),
         )
     }
@@ -96,12 +139,21 @@ class TargetSettingsPreferences(context: Context) {
         } else {
             settings.validatedCustomDailyTargetMinutes
         }
+        val validatedSessionMinutes = settings.validatedSessionDurationMinutes
+        val validatedCustomSessionMinutes = if (settings.isCustomSessionDuration) {
+            validatedSessionMinutes
+        } else {
+            settings.validatedCustomSessionDurationMinutes
+        }
+
         prefs.edit {
             putInt(KEY_DAILY_TARGET_MINUTES, validatedMinutes)
             putBoolean(KEY_IS_CUSTOM_DAILY_TARGET, settings.isCustomDailyTarget)
             putInt(KEY_CUSTOM_DAILY_TARGET_MINUTES, validatedCustomMinutes)
             putInt(KEY_DAILY_TARGET_HOURS, settings.dailyTargetHours)
-            putInt(KEY_SESSION_DURATION_MINUTES, settings.sessionDurationMinutes)
+            putInt(KEY_SESSION_DURATION_MINUTES, validatedSessionMinutes)
+            putBoolean(KEY_IS_CUSTOM_SESSION_DURATION, settings.isCustomSessionDuration)
+            putInt(KEY_CUSTOM_SESSION_DURATION_MINUTES, validatedCustomSessionMinutes)
             putBoolean(KEY_REMINDER_ON_SESSION_END, settings.reminderOnSessionEnd)
         }
     }
@@ -113,6 +165,8 @@ class TargetSettingsPreferences(context: Context) {
         private const val KEY_IS_CUSTOM_DAILY_TARGET = "is_custom_daily_target"
         private const val KEY_CUSTOM_DAILY_TARGET_MINUTES = "custom_daily_target_minutes"
         private const val KEY_SESSION_DURATION_MINUTES = "session_duration_minutes"
+        private const val KEY_IS_CUSTOM_SESSION_DURATION = "is_custom_session_duration"
+        private const val KEY_CUSTOM_SESSION_DURATION_MINUTES = "custom_session_duration_minutes"
         private const val KEY_REMINDER_ON_SESSION_END = "reminder_on_session_end"
 
         const val MIN_DAILY_TARGET_MINUTES = 15
@@ -122,6 +176,9 @@ class TargetSettingsPreferences(context: Context) {
         const val DEFAULT_DAILY_TARGET_MINUTES = 180
         const val DEFAULT_CUSTOM_DAILY_TARGET_MINUTES = 90
         const val DEFAULT_SESSION_MINUTES = 10
+        const val DEFAULT_CUSTOM_SESSION_MINUTES = 25
+        const val MIN_SESSION_DURATION_MINUTES = 1
+        const val MAX_SESSION_DURATION_MINUTES = 60
         const val DEFAULT_REMINDER_ENABLED = true
     }
 }

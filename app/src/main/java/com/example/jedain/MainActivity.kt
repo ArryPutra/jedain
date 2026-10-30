@@ -16,4 +16,27 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        FloatingBubbleService.setAppInForeground(true)
+        val controller = FloatingBubbleController(this)
+        if (controller.isEnabled() && PermissionHelper.hasOverlayPermission(this)) {
+            FloatingBubbleService.start(this)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        FloatingBubbleService.setAppInForeground(true)
+        val controller = FloatingBubbleController(this)
+        if (controller.isEnabled() && PermissionHelper.hasOverlayPermission(this)) {
+            FloatingBubbleService.start(this)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        FloatingBubbleService.setAppInForeground(false)
+    }
 }

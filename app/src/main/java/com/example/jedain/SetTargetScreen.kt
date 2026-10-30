@@ -38,11 +38,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
@@ -90,6 +95,7 @@ data class DailyTargetFeedback(
     val description: String,
     val accentColor: Color,
     val softBgColor: Color,
+    val isCustom: Boolean = false,
 )
 
 internal val DailyTargetPresetOptions = listOf(
@@ -131,7 +137,7 @@ private val HighDailyTargetTierOption = DailyTargetPresetOption(
     colorTier = DailyTargetColorTier.RED,
 )
 
-private val SessionDurationOptions = listOf(5, 10, 15, 30)
+
 
 internal fun resolveTierOption(minutes: Int): DailyTargetPresetOption {
     val validated = validateDailyTargetMinutes(minutes)
@@ -159,22 +165,19 @@ internal fun resolveColorPair(
 
 internal fun resolveDailyTargetFeedback(
     minutes: Int,
-    isCustom: Boolean,
+    isCustom: Boolean = false,
     colors: JedaInColorPalette,
 ): DailyTargetFeedback {
     val validated = validateDailyTargetMinutes(minutes)
     val tierOption = resolveTierOption(validated)
-    val (accentColor, softBgColor) = if (isCustom) {
-        resolveColorPair(DailyTargetColorTier.CUSTOM_BLUE, colors)
-    } else {
-        resolveColorPair(tierOption.colorTier, colors)
-    }
+    val (accentColor, softBgColor) = resolveColorPair(tierOption.colorTier, colors)
     return DailyTargetFeedback(
         durationText = formatDailyTargetDuration(validated),
         category = tierOption.category,
         description = tierOption.description,
         accentColor = accentColor,
         softBgColor = softBgColor,
+        isCustom = isCustom,
     )
 }
 
@@ -206,6 +209,15 @@ fun SetTargetScreen(
     ) {
         mutableIntStateOf(initialSettings.validatedCustomDailyTargetMinutes)
     }
+    var isCustomSession by rememberSaveable(initialSettings.isCustomSessionDuration) {
+        mutableStateOf(initialSettings.isCustomSessionDuration)
+    }
+    var customSessionMinutes by rememberSaveable(
+        initialSettings.customSessionDurationMinutes,
+        initialSettings.sessionDurationMinutes,
+    ) {
+        mutableIntStateOf(initialSettings.validatedCustomSessionDurationMinutes)
+    }
     var selectedSessionMinutes by rememberSaveable(initialSettings.sessionDurationMinutes) {
         mutableIntStateOf(initialSettings.sessionDurationMinutes)
     }
@@ -213,6 +225,9 @@ fun SetTargetScreen(
         mutableStateOf(initialSettings.reminderOnSessionEnd)
     }
     var showCustomTargetSheet by rememberSaveable {
+        mutableStateOf(false)
+    }
+    var showCustomSessionSheet by rememberSaveable {
         mutableStateOf(false)
     }
 
@@ -223,6 +238,8 @@ fun SetTargetScreen(
         isCustom: Boolean = isCustomTarget,
         customMinutes: Int = customTargetMinutes,
         sessionMinutes: Int = selectedSessionMinutes,
+        isCustomSessionDuration: Boolean = isCustomSession,
+        customSessionMin: Int = customSessionMinutes,
         reminder: Boolean = reminderEnabled,
     ): TargetSettingsState {
         return TargetSettingsState(
@@ -230,6 +247,8 @@ fun SetTargetScreen(
             isCustomDailyTarget = isCustom,
             customDailyTargetMinutes = validateDailyTargetMinutes(customMinutes),
             sessionDurationMinutes = sessionMinutes,
+            isCustomSessionDuration = isCustomSessionDuration,
+            customSessionDurationMinutes = validateSessionDurationMinutes(customSessionMin),
             reminderOnSessionEnd = reminder,
         )
     }
@@ -253,7 +272,20 @@ fun SetTargetScreen(
             showCustomTargetSheet = true
         },
         selectedSessionMinutes = selectedSessionMinutes,
-        onSessionMinutesSelected = { selectedSessionMinutes = it },
+        isCustomSession = isCustomSession,
+        onSessionMinutesSelected = { presetMinutes ->
+            selectedSessionMinutes = presetMinutes
+            isCustomSession = false
+            onTargetSettingsChanged(
+                buildCurrentSettings(
+                    sessionMinutes = presetMinutes,
+                    isCustomSessionDuration = false,
+                ),
+            )
+        },
+        onCustomSessionClick = {
+            showCustomSessionSheet = true
+        },
         reminderEnabled = reminderEnabled,
         onReminderToggleChanged = { reminderEnabled = it },
         onBackClick = onBackClick,
@@ -285,6 +317,29 @@ fun SetTargetScreen(
             },
         )
     }
+
+    if (showCustomSessionSheet) {
+        CustomSessionDurationModal(
+            initialMinutes = if (isCustomSession) selectedSessionMinutes else customSessionMinutes,
+            onDismiss = {
+                showCustomSessionSheet = false
+            },
+            onApplyCustomDuration = { appliedMinutes ->
+                val validated = validateSessionDurationMinutes(appliedMinutes)
+                selectedSessionMinutes = validated
+                customSessionMinutes = validated
+                isCustomSession = true
+                showCustomSessionSheet = false
+                onTargetSettingsChanged(
+                    buildCurrentSettings(
+                        sessionMinutes = validated,
+                        isCustomSessionDuration = true,
+                        customSessionMin = validated,
+                    ),
+                )
+            },
+        )
+    }
 }
 
 // --- Stateless SetTargetScreenContent ---
@@ -297,7 +352,9 @@ fun SetTargetScreenContent(
     onPresetTargetSelected: (Int) -> Unit,
     onCustomCardClick: () -> Unit,
     selectedSessionMinutes: Int,
+    isCustomSession: Boolean,
     onSessionMinutesSelected: (Int) -> Unit,
+    onCustomSessionClick: () -> Unit,
     reminderEnabled: Boolean,
     onReminderToggleChanged: (Boolean) -> Unit,
     onBackClick: () -> Unit,
@@ -336,7 +393,9 @@ fun SetTargetScreenContent(
             // 5. Bagian Sesi Jeda Waktu
             SessionBreakSettingCard(
                 selectedMinutes = selectedSessionMinutes,
-                onSelectMinutes = onSessionMinutesSelected,
+                isCustomSession = isCustomSession,
+                onSelectPresetMinutes = onSessionMinutesSelected,
+                onCustomOptionClick = onCustomSessionClick,
                 reminderEnabled = reminderEnabled,
                 onReminderToggleChanged = onReminderToggleChanged,
             )
@@ -717,12 +776,23 @@ private fun DailyTargetExplanationCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text(
-                    text = headerLabel,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = feedback.accentColor,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(feedback.accentColor),
+                    )
+                    Text(
+                        text = headerLabel,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = feedback.accentColor,
+                    )
+                }
                 Text(
                     text = feedback.description,
                     fontSize = 13.sp,
@@ -1033,7 +1103,9 @@ private fun DurationStepperControl(
 @Composable
 private fun SessionBreakSettingCard(
     selectedMinutes: Int,
-    onSelectMinutes: (Int) -> Unit,
+    isCustomSession: Boolean,
+    onSelectPresetMinutes: (Int) -> Unit,
+    onCustomOptionClick: () -> Unit,
     reminderEnabled: Boolean,
     onReminderToggleChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -1103,8 +1175,13 @@ private fun SessionBreakSettingCard(
                         .padding(vertical = 14.dp, horizontal = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    val displayDuration = if (isCustomSession) {
+                        "$selectedMinutes menit (Kustom)"
+                    } else {
+                        "$selectedMinutes menit"
+                    }
                     Text(
-                        text = "$selectedMinutes menit",
+                        text = displayDuration,
                         fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
                         color = colors.textPrimary,
@@ -1122,25 +1199,66 @@ private fun SessionBreakSettingCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 2x2 Grid for 4 Session Duration Options (5, 10, 15, 30 menit)
+            // 3x2 Grid for 6 Session Duration Options:
+            // 5 menit, 10 menit
+            // 15 menit, 20 menit
+            // 30 menit, Custom
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SessionDurationOptions.chunked(2).forEach { rowMinutes ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        rowMinutes.forEach { minutes ->
-                            val isSelected = minutes == selectedMinutes
-                            SessionOptionChipItem(
-                                label = "$minutes menit",
-                                isSelected = isSelected,
-                                onClick = { onSelectMinutes(minutes) },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SessionOptionChipItem(
+                        label = "5 menit",
+                        isSelected = !isCustomSession && selectedMinutes == 5,
+                        onClick = { onSelectPresetMinutes(5) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SessionOptionChipItem(
+                        label = "10 menit",
+                        isSelected = !isCustomSession && selectedMinutes == 10,
+                        onClick = { onSelectPresetMinutes(10) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SessionOptionChipItem(
+                        label = "15 menit",
+                        isSelected = !isCustomSession && selectedMinutes == 15,
+                        onClick = { onSelectPresetMinutes(15) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SessionOptionChipItem(
+                        label = "20 menit",
+                        isSelected = !isCustomSession && selectedMinutes == 20,
+                        onClick = { onSelectPresetMinutes(20) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SessionOptionChipItem(
+                        label = "30 menit",
+                        isSelected = !isCustomSession && selectedMinutes == 30,
+                        onClick = { onSelectPresetMinutes(30) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    val customLabel = if (isCustomSession) "Custom ($selectedMinutes m)" else "Custom"
+                    SessionOptionChipItem(
+                        label = customLabel,
+                        isSelected = isCustomSession,
+                        onClick = onCustomOptionClick,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
 
@@ -1188,6 +1306,213 @@ private fun SessionBreakSettingCard(
                         uncheckedTrackColor = colors.background,
                         uncheckedBorderColor = colors.border,
                     ),
+                )
+            }
+        }
+    }
+}
+
+// --- Custom Session Duration Bottom Sheet Modal ---
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun CustomSessionDurationModal(
+    initialMinutes: Int,
+    onDismiss: () -> Unit,
+    onApplyCustomDuration: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = JedaInTheme.colors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var textInput by rememberSaveable(initialMinutes) {
+        mutableStateOf(initialMinutes.coerceIn(1, 60).toString())
+    }
+
+    val parsedMinutes = textInput.toIntOrNull()
+    val isBlank = textInput.isBlank()
+    val isExceedMax = parsedMinutes != null && parsedMinutes > 60
+    val isBelowMin = parsedMinutes != null && parsedMinutes < 1
+    val isValid = parsedMinutes != null && parsedMinutes in 1..60
+
+    val errorMessage = when {
+        isBlank -> "Masukkan durasi antara 1 sampai 60 menit."
+        isBelowMin -> "Minimal 1 menit."
+        isExceedMax -> "Maksimal 60 menit. Nilai tidak boleh lebih dari 60."
+        else -> null
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Header
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Tentukan durasi sesi",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                )
+                Text(
+                    text = "Masukkan durasi yang kamu inginkan dalam menit.",
+                    fontSize = 13.sp,
+                    color = colors.textSecondary,
+                )
+            }
+
+            // Input Container with Stepper and OutlinedTextField
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedTextField(
+                        value = textInput,
+                        onValueChange = { input ->
+                            // Hanya menerima bilangan bulat positif (digits only)
+                            val digitsOnly = input.filter { it.isDigit() }
+                            textInput = digitsOnly
+                        },
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
+                            Text(
+                                text = "Contoh: 25",
+                                color = colors.textSecondary.copy(alpha = 0.5f),
+                            )
+                        },
+                        trailingIcon = {
+                            Text(
+                                text = "menit",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textSecondary,
+                                modifier = Modifier.padding(end = 12.dp),
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = if (errorMessage != null) colors.durationRed else colors.accent,
+                            unfocusedBorderColor = if (errorMessage != null) colors.durationRed else colors.divider,
+                            focusedContainerColor = colors.background,
+                            unfocusedContainerColor = colors.background,
+                            cursorColor = colors.accent,
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                        ),
+                        isError = errorMessage != null,
+                    )
+
+                    // Quick +/- Stepper buttons
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    val current = parsedMinutes ?: 25
+                                    val next = (current - 1).coerceAtLeast(1)
+                                    textInput = next.toString()
+                                },
+                            shape = CircleShape,
+                            color = colors.background,
+                            border = BorderStroke(1.dp, colors.divider),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Remove,
+                                    contentDescription = "Kurangi 1 menit",
+                                    tint = colors.textPrimary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    val current = parsedMinutes ?: 25
+                                    val next = (current + 1).coerceAtMost(60)
+                                    textInput = next.toString()
+                                },
+                            shape = CircleShape,
+                            color = colors.background,
+                            border = BorderStroke(1.dp, colors.divider),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Tambah 1 menit",
+                                    tint = colors.textPrimary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Keterangan / Pesan Validasi
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        fontSize = 12.sp,
+                        color = colors.durationRed,
+                        fontWeight = FontWeight.Medium,
+                    )
+                } else {
+                    Text(
+                        text = "Minimal 1 menit, maksimal 60 menit.",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+
+            // Tombol Konfirmasi
+            Button(
+                onClick = {
+                    if (isValid) {
+                        onApplyCustomDuration(parsedMinutes)
+                    }
+                },
+                enabled = isValid,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.surface,
+                    disabledContainerColor = colors.divider,
+                    disabledContentColor = colors.textSecondary,
+                ),
+            ) {
+                Text(
+                    text = "Konfirmasi Durasi",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }

@@ -1,0 +1,372 @@
+package com.example.jedain
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.os.SystemClock
+import android.util.Log
+import androidx.core.content.edit
+import java.util.Locale
+
+enum class BreakSessionState {
+    ACTIVE,
+    PAUSED,
+    EXPIRED,
+    RESTING,
+}
+
+object BreakSessionManager {
+
+    private const val TAG = "JedaInBubble"
+    const val PREFS_NAME = "jedain_break_session"
+
+    private const val KEY_REMAINING_MILLIS = "remaining_millis"
+    private const val KEY_TOTAL_SESSION_MILLIS = "total_session_millis"
+    private const val KEY_STATE = "session_state"
+    private const val KEY_REST_END_TIME = "rest_end_time"
+    private const val KEY_CONSECUTIVE_EXTENSIONS = "consecutive_extensions"
+    private const val KEY_CONFIGURED_SESSION_MINUTES = "configured_session_minutes"
+
+    const val MAX_CONSECUTIVE_EXTENSIONS = 2
+    const val REST_DURATION_MILLIS = 5L * 60L * 1000L
+
+    const val KEY_NOTIF_2MIN_SENT = "notif_2min_sent"
+    const val KEY_NOTIF_30SEC_SENT = "notif_30sec_sent"
+
+    const val TWO_MINUTES_MILLIS = 2L * 60L * 1000L
+    const val THIRTY_SECONDS_MILLIS = 30L * 1000L
+
+    private var lastMonotonicTime: Long = 0L
+
+    private fun getPrefs(context: Context): SharedPreferences {
+        return context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun getExtensionMinutes(sessionDurationMinutes: Int): Int {
+        return when (sessionDurationMinutes) {
+            1 -> 1
+            2 -> 1
+            5 -> 2
+            10 -> 3
+            15 -> 5
+            20 -> 5
+            30 -> 5
+            else -> when {
+                sessionDurationMinutes <= 2 -> 1
+                sessionDurationMinutes <= 5 -> 2
+                sessionDurationMinutes <= 10 -> 3
+                else -> 5
+            }
+        }
+    }
+
+    fun getConfirmationTemplate(extensionMinutes: Int): String {
+        return "Saya sadar dan memilih melanjutkan selama $extensionMinutes menit."
+    }
+
+    fun normalizeWords(text: String): List<String> {
+        return text.trim()
+            .split("\\s+".toRegex())
+            .filter { it.isNotEmpty() }
+            .map { it.lowercase(Locale.ROOT) }
+    }
+
+    fun validateConfirmationInput(input: String, template: String): Boolean {
+        val inputWords = normalizeWords(input)
+        val templateWords = normalizeWords(template)
+        return inputWords == templateWords
+    }
+
+    fun getSessionState(context: Context): BreakSessionState {
+        val prefs = getPrefs(context)
+        val stateStr = prefs.getString(KEY_STATE, BreakSessionState.PAUSED.name)
+        val state = runCatching { BreakSessionState.valueOf(stateStr ?: BreakSessionState.PAUSED.name) }
+            .getOrDefault(BreakSessionState.PAUSED)
+
+        if (state == BreakSessionState.RESTING) {
+            val restEndTime = prefs.getLong(KEY_REST_END_TIME, 0L)
+            if (System.currentTimeMillis() >= restEndTime) {
+                // Rest period has finished! Reset for new session.
+                onRestCompleted(context)
+                return BreakSessionState.PAUSED
+            }
+        }
+
+        return state
+    }
+
+    fun isResting(context: Context): Boolean {
+        return getSessionState(context) == BreakSessionState.RESTING
+    }
+
+    fun getRemainingRestMillis(context: Context): Long {
+        val prefs = getPrefs(context)
+        val restEndTime = prefs.getLong(KEY_REST_END_TIME, 0L)
+        return (restEndTime - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
+
+    fun getRemainingSessionMillis(context: Context): Long {
+        val prefs = getPrefs(context)
+        ensureInitialized(context)
+        return prefs.getLong(KEY_REMAINING_MILLIS, 0L).coerceAtLeast(0L)
+    }
+
+    fun getTotalSessionMillis(context: Context): Long {
+        val prefs = getPrefs(context)
+        ensureInitialized(context)
+        return prefs.getLong(KEY_TOTAL_SESSION_MILLIS, 0L).coerceAtLeast(1L)
+    }
+
+    fun getConsecutiveExtensions(context: Context): Int {
+        return getPrefs(context).getInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+    }
+
+    fun canExtend(context: Context): Boolean {
+        return getConsecutiveExtensions(context) < MAX_CONSECUTIVE_EXTENSIONS
+    }
+
+    fun is2MinReminderSent(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_NOTIF_2MIN_SENT, false)
+    }
+
+    fun is30SecReminderSent(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_NOTIF_30SEC_SENT, false)
+    }
+
+    fun set2MinReminderSent(context: Context, sent: Boolean) {
+        getPrefs(context).edit { putBoolean(KEY_NOTIF_2MIN_SENT, sent) }
+    }
+
+    fun set30SecReminderSent(context: Context, sent: Boolean) {
+        getPrefs(context).edit { putBoolean(KEY_NOTIF_30SEC_SENT, sent) }
+    }
+
+    fun resetReminderFlags(context: Context) {
+        getPrefs(context).edit {
+            putBoolean(KEY_NOTIF_2MIN_SENT, false)
+            putBoolean(KEY_NOTIF_30SEC_SENT, false)
+        }
+        Log.d(TAG, "BreakSession reminder notification flags reset")
+    }
+
+    fun checkAndTriggerReminders(context: Context, remainingMillis: Long) {
+        val currentState = getSessionState(context)
+        if (currentState == BreakSessionState.RESTING || currentState == BreakSessionState.EXPIRED) {
+            return
+        }
+
+        val targetSettings = TargetSettingsPreferences(context).loadSettings()
+        if (!targetSettings.reminderOnSessionEnd) {
+            return
+        }
+
+        val totalSessionMillis = getTotalSessionMillis(context)
+
+        // Ambang 30 detik: ketika tersisa <= 30 detik dan > 0 detik
+        // Hanya picu jika total durasi sesi lebih dari 30 detik (tidak memaksakan di awal jika durasi <= 30 detik)
+        if (remainingMillis in 1L..THIRTY_SECONDS_MILLIS && totalSessionMillis > THIRTY_SECONDS_MILLIS) {
+            if (!is30SecReminderSent(context)) {
+                set30SecReminderSent(context, true)
+                SessionReminderNotificationHelper.send30SecondWarning(context)
+            }
+        }
+        // Ambang 2 menit: ketika tersisa <= 2 menit dan > 30 detik
+        // Hanya picu jika total durasi sesi lebih dari 2 menit
+        else if (remainingMillis in (THIRTY_SECONDS_MILLIS + 1L)..TWO_MINUTES_MILLIS && totalSessionMillis > TWO_MINUTES_MILLIS) {
+            if (!is2MinReminderSent(context)) {
+                set2MinReminderSent(context, true)
+                SessionReminderNotificationHelper.send2MinuteWarning(context)
+            }
+        }
+    }
+
+    fun getConfiguredSessionMinutes(context: Context): Int {
+        val targetSettings = TargetSettingsPreferences(context).loadSettings()
+        return targetSettings.sessionDurationMinutes.coerceAtLeast(1)
+    }
+
+    fun resetSession(context: Context) {
+        val configuredMinutes = getConfiguredSessionMinutes(context)
+        val sessionMillis = configuredMinutes * 60L * 1000L
+        lastMonotonicTime = 0L
+        resetReminderFlags(context)
+        SessionReminderNotificationHelper.cancelAllReminders(context)
+        val currentState = getSessionState(context)
+        getPrefs(context).edit {
+            putLong(KEY_REMAINING_MILLIS, sessionMillis)
+            putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
+            putInt(KEY_CONFIGURED_SESSION_MINUTES, configuredMinutes)
+            putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+            if (currentState != BreakSessionState.RESTING) {
+                val nextState = if (currentState == BreakSessionState.ACTIVE) {
+                    BreakSessionState.ACTIVE.name
+                } else {
+                    BreakSessionState.PAUSED.name
+                }
+                putString(KEY_STATE, nextState)
+            }
+        }
+        Log.d(TAG, "BreakSession reset to $configuredMinutes minutes ($sessionMillis ms)")
+    }
+
+    private fun ensureInitialized(context: Context) {
+        val prefs = getPrefs(context)
+        val configuredMinutes = getConfiguredSessionMinutes(context)
+        val savedConfiguredMinutes = prefs.getInt(KEY_CONFIGURED_SESSION_MINUTES, -1)
+
+        val currentState = getSessionState(context)
+        val hasRemaining = prefs.contains(KEY_REMAINING_MILLIS)
+
+        if (!hasRemaining || savedConfiguredMinutes != configuredMinutes) {
+            val sessionMillis = configuredMinutes * 60L * 1000L
+            resetReminderFlags(context)
+            SessionReminderNotificationHelper.cancelAllReminders(context)
+            prefs.edit {
+                putLong(KEY_REMAINING_MILLIS, sessionMillis)
+                putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
+                putInt(KEY_CONFIGURED_SESSION_MINUTES, configuredMinutes)
+                putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+                if (currentState != BreakSessionState.RESTING) {
+                    val nextState = if (currentState == BreakSessionState.ACTIVE) {
+                        BreakSessionState.ACTIVE.name
+                    } else {
+                        BreakSessionState.PAUSED.name
+                    }
+                    putString(KEY_STATE, nextState)
+                }
+            }
+            Log.d(TAG, "BreakSessionManager initialized with $configuredMinutes minutes ($sessionMillis ms)")
+        }
+    }
+
+    fun onMonitoredAppEntered(context: Context) {
+        val currentState = getSessionState(context)
+        if (currentState == BreakSessionState.RESTING) {
+            Log.d(TAG, "Monitored app entered during RESTING period")
+            return
+        }
+
+        ensureInitialized(context)
+        lastMonotonicTime = SystemClock.elapsedRealtime()
+
+        if (currentState == BreakSessionState.PAUSED) {
+            getPrefs(context).edit {
+                putString(KEY_STATE, BreakSessionState.ACTIVE.name)
+            }
+            Log.d(TAG, "BreakSession state -> ACTIVE")
+        }
+        val currentRemaining = getRemainingSessionMillis(context)
+        checkAndTriggerReminders(context, currentRemaining)
+    }
+
+    fun onMonitoredAppExited(context: Context) {
+        lastMonotonicTime = 0L
+        val currentState = getSessionState(context)
+        if (currentState == BreakSessionState.ACTIVE) {
+            getPrefs(context).edit {
+                putString(KEY_STATE, BreakSessionState.PAUSED.name)
+            }
+            Log.d(TAG, "BreakSession state -> PAUSED")
+        }
+    }
+
+    /**
+     * Called on each 1-second tick when a monitored app is active in the foreground.
+     * Decrements the remaining session time accurately using monotonic clock.
+     * Returns true if the session expired on this tick.
+     */
+    fun tick(context: Context): Boolean {
+        val currentState = getSessionState(context)
+        if (currentState == BreakSessionState.RESTING) {
+            return false
+        }
+        if (currentState == BreakSessionState.EXPIRED) {
+            SessionReminderNotificationHelper.cancelAllReminders(context)
+            return true
+        }
+
+        // Jika tick() berjalan, aplikasi yang dipantau sedang aktif. Pastikan status ACTIVE.
+        if (currentState == BreakSessionState.PAUSED) {
+            getPrefs(context).edit {
+                putString(KEY_STATE, BreakSessionState.ACTIVE.name)
+            }
+            Log.d(TAG, "BreakSession state -> ACTIVE (via tick)")
+        }
+
+        ensureInitialized(context)
+        val nowMonotonic = SystemClock.elapsedRealtime()
+        if (lastMonotonicTime <= 0L) {
+            lastMonotonicTime = nowMonotonic
+            return false
+        }
+
+        val delta = (nowMonotonic - lastMonotonicTime).coerceAtLeast(0L)
+        lastMonotonicTime = nowMonotonic
+
+        val prefs = getPrefs(context)
+        val currentRemaining = prefs.getLong(KEY_REMAINING_MILLIS, 0L)
+        val newRemaining = (currentRemaining - delta).coerceAtLeast(0L)
+
+        prefs.edit {
+            putLong(KEY_REMAINING_MILLIS, newRemaining)
+            if (newRemaining <= 0L) {
+                putString(KEY_STATE, BreakSessionState.EXPIRED.name)
+            }
+        }
+
+        if (newRemaining <= 0L) {
+            Log.d(TAG, "BreakSession EXPIRED (00:00 reached)!")
+            SessionReminderNotificationHelper.cancelAllReminders(context)
+            return true
+        }
+
+        checkAndTriggerReminders(context, newRemaining)
+        return false
+    }
+
+    fun startRest(context: Context) {
+        val restEndTime = System.currentTimeMillis() + REST_DURATION_MILLIS
+        lastMonotonicTime = 0L
+        resetReminderFlags(context)
+        SessionReminderNotificationHelper.cancelAllReminders(context)
+        getPrefs(context).edit {
+            putString(KEY_STATE, BreakSessionState.RESTING.name)
+            putLong(KEY_REST_END_TIME, restEndTime)
+        }
+        Log.d(TAG, "Started 5-minute rest period. Ends at $restEndTime")
+    }
+
+    fun onRestCompleted(context: Context) {
+        val configuredMinutes = getConfiguredSessionMinutes(context)
+        val sessionMillis = configuredMinutes * 60L * 1000L
+        lastMonotonicTime = 0L
+        resetReminderFlags(context)
+        SessionReminderNotificationHelper.cancelAllReminders(context)
+
+        getPrefs(context).edit {
+            putLong(KEY_REMAINING_MILLIS, sessionMillis)
+            putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
+            putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+            putString(KEY_STATE, BreakSessionState.PAUSED.name)
+            remove(KEY_REST_END_TIME)
+        }
+        Log.d(TAG, "Rest completed! Reset consecutive extensions and initialized new session of $configuredMinutes min")
+    }
+
+    fun extendSession(context: Context, extensionMinutes: Int): Long {
+        val extensionMillis = extensionMinutes * 60L * 1000L
+        val currentExtensions = getConsecutiveExtensions(context)
+        val newExtensions = currentExtensions + 1
+        lastMonotonicTime = SystemClock.elapsedRealtime()
+        SessionReminderNotificationHelper.cancelAllReminders(context)
+
+        getPrefs(context).edit {
+            putLong(KEY_REMAINING_MILLIS, extensionMillis)
+            putLong(KEY_TOTAL_SESSION_MILLIS, extensionMillis)
+            putInt(KEY_CONSECUTIVE_EXTENSIONS, newExtensions)
+            putString(KEY_STATE, BreakSessionState.ACTIVE.name)
+        }
+
+        Log.d(TAG, "Session extended by $extensionMinutes minutes ($extensionMillis ms). Extension #$newExtensions")
+        return extensionMillis
+    }
+}

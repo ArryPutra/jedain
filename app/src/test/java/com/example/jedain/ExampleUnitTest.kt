@@ -1,5 +1,12 @@
 package com.example.jedain
 
+import androidx.compose.ui.graphics.toArgb
+import com.example.jedain.ui.theme.BorderDarkGray
+import com.example.jedain.ui.theme.BorderSubtleGray
+import com.example.jedain.ui.theme.DurationRedDark
+import com.example.jedain.ui.theme.DurationRedLight
+import com.example.jedain.ui.theme.DurationYellowDark
+import com.example.jedain.ui.theme.DurationYellowLight
 import com.example.jedain.ui.theme.LightJedaInColors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,10 +85,29 @@ class ExampleUnitTest {
         assertEquals("Empat jam sehari merupakan target yang tinggi. Pertimbangkan durasi lebih rendah.", feedback4h.description)
         assertEquals(colors.durationRed, feedback4h.accentColor)
 
-        val feedbackCustom = resolveDailyTargetFeedback(90, isCustom = true, colors = colors)
-        assertEquals("1 jam 30 menit", feedbackCustom.durationText)
-        assertEquals("Perlu diperhatikan", feedbackCustom.category)
-        assertEquals(colors.durationCustomBlue, feedbackCustom.accentColor)
+        val feedbackCustom45m = resolveDailyTargetFeedback(45, isCustom = true, colors = colors)
+        assertEquals("45 menit", feedbackCustom45m.durationText)
+        assertEquals("Terkendali", feedbackCustom45m.category)
+        assertEquals(colors.durationGreen, feedbackCustom45m.accentColor)
+        assertTrue(feedbackCustom45m.isCustom)
+
+        val feedbackCustom90m = resolveDailyTargetFeedback(90, isCustom = true, colors = colors)
+        assertEquals("1 jam 30 menit", feedbackCustom90m.durationText)
+        assertEquals("Perlu diperhatikan", feedbackCustom90m.category)
+        assertEquals(colors.durationYellow, feedbackCustom90m.accentColor)
+        assertTrue(feedbackCustom90m.isCustom)
+
+        val feedbackCustom150m = resolveDailyTargetFeedback(150, isCustom = true, colors = colors)
+        assertEquals("2 jam 30 menit", feedbackCustom150m.durationText)
+        assertEquals("Cukup tinggi", feedbackCustom150m.category)
+        assertEquals(colors.durationOrange, feedbackCustom150m.accentColor)
+        assertTrue(feedbackCustom150m.isCustom)
+
+        val feedbackCustom240m = resolveDailyTargetFeedback(240, isCustom = true, colors = colors)
+        assertEquals("4 jam", feedbackCustom240m.durationText)
+        assertEquals("Target tinggi", feedbackCustom240m.category)
+        assertEquals(colors.durationRed, feedbackCustom240m.accentColor)
+        assertTrue(feedbackCustom240m.isCustom)
     }
 
     @Test
@@ -102,5 +128,490 @@ class ExampleUnitTest {
         assertFalse(overLimitState.isCustomDailyTarget)
         assertEquals(240, overLimitState.validatedDailyTargetMinutes)
         assertEquals(4, overLimitState.dailyTargetHours)
+    }
+
+    @Test
+    fun isRecommendedPackageOrCategory_detectsCategoriesAndPopularKeywords() {
+        assertTrue(isRecommendedPackageOrCategory("com.zhiliaoapp.musically", -1))
+        assertTrue(isRecommendedPackageOrCategory("com.instagram.android", -1))
+        assertTrue(isRecommendedPackageOrCategory("com.google.android.youtube", -1))
+        assertTrue(isRecommendedPackageOrCategory("com.shopee.id", -1))
+        assertTrue(isRecommendedPackageOrCategory("com.example.socialapp", android.content.pm.ApplicationInfo.CATEGORY_SOCIAL))
+        assertTrue(isRecommendedPackageOrCategory("com.example.videoapp", android.content.pm.ApplicationInfo.CATEGORY_VIDEO))
+        assertTrue(isRecommendedPackageOrCategory("com.example.gameapp", android.content.pm.ApplicationInfo.CATEGORY_GAME))
+        assertFalse(isRecommendedPackageOrCategory("com.android.calculator2", -1))
+    }
+
+    @Test
+    fun formatScreenTimeShort_andComparison_formatCorrectlyInIndonesian() {
+        assertEquals("0m", formatScreenTimeShort(0L))
+        assertEquals("42m", formatScreenTimeShort(42L * 60_000L))
+        assertEquals("1j 15m", formatScreenTimeShort(75L * 60_000L))
+        assertEquals("2j", formatScreenTimeShort(120L * 60_000L))
+
+        val noPermission = formatScreenTimeComparison(
+            hasUsagePermission = false,
+            todayMillis = 60L * 60_000L,
+            yesterdayMillis = 30L * 60_000L,
+        )
+        assertEquals("Aktifkan izin penggunaan untuk melihat data asli", noPermission.first)
+        assertTrue(noPermission.second)
+
+        val lessToday = formatScreenTimeComparison(
+            hasUsagePermission = true,
+            todayMillis = 30L * 60_000L,
+            yesterdayMillis = 75L * 60_000L,
+        )
+        assertEquals("45m lebih sedikit dari kemarin", lessToday.first)
+        assertTrue(lessToday.second)
+
+        val moreToday = formatScreenTimeComparison(
+            hasUsagePermission = true,
+            todayMillis = 120L * 60_000L,
+            yesterdayMillis = 45L * 60_000L,
+        )
+        assertEquals("1j 15m lebih banyak dari kemarin", moreToday.first)
+        assertFalse(moreToday.second)
+
+        val sameToday = formatScreenTimeComparison(
+            hasUsagePermission = true,
+            todayMillis = 60L * 60_000L,
+            yesterdayMillis = 60L * 60_000L,
+        )
+        assertEquals("Sama seperti kemarin pada waktu ini", sameToday.first)
+        assertTrue(sameToday.second)
+
+        val emptyMonitoredSummary = buildScreenTimeSummaryFromMaps(
+            hasUsagePermission = true,
+            hasOverlayPermission = true,
+            monitoredPackages = emptySet(),
+            todayUsageMap = mapOf("com.instagram.android" to 60L * 60_000L),
+            yesterdayUsageMap = mapOf("com.instagram.android" to 30L * 60_000L),
+        )
+        assertEquals("0m", emptyMonitoredSummary.todayTotalDurationText)
+        assertEquals("Pilih aplikasi yang ingin dipantau", emptyMonitoredSummary.comparisonChangeText)
+        assertTrue(emptyMonitoredSummary.isTrendingDown)
+    }
+
+    @Test
+    fun computeForegroundMillis_singleNormalSession() {
+        val events = listOf(
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 1_000L),
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 4_000L),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 10_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(3_000L, result["com.instagram.android"])
+    }
+
+    @Test
+    fun computeForegroundMillis_twoAppsAlternating() {
+        val events = listOf(
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 1_000L),
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 3_000L),
+            UsageEventLite("com.zhiliaoapp.musically", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 4_000L),
+            UsageEventLite("com.zhiliaoapp.musically", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 7_000L),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 10_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(2_000L, result["com.instagram.android"])
+        assertEquals(3_000L, result["com.zhiliaoapp.musically"])
+    }
+
+    @Test
+    fun computeForegroundMillis_missingPausedThenAnotherAppResumed() {
+        val events = listOf(
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 1_000L),
+            UsageEventLite("com.zhiliaoapp.musically", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 4_000L),
+            UsageEventLite("com.zhiliaoapp.musically", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 6_000L),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 10_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(3_000L, result["com.instagram.android"])
+        assertEquals(2_000L, result["com.zhiliaoapp.musically"])
+    }
+
+    @Test
+    fun computeForegroundMillis_screenOffOrKeyguardClosesActiveSession() {
+        val events = listOf(
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 1_000L),
+            UsageEventLite("android", 16, 3_500L), // SCREEN_NON_INTERACTIVE = 16
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 5_000L),
+            UsageEventLite("com.zhiliaoapp.musically", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 6_000L),
+            UsageEventLite("android", 17, 7_500L), // KEYGUARD_SHOWN = 17
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 10_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(2_500L, result["com.instagram.android"])
+        assertEquals(1_500L, result["com.zhiliaoapp.musically"])
+    }
+
+    @Test
+    fun computeForegroundMillis_openSessionAtEndTimeIsClosedAtEndTime() {
+        val events = listOf(
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 2_000L),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 5_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(3_000L, result["com.instagram.android"])
+    }
+
+    @Test
+    fun computeForegroundMillis_ignoresOwnJedaInPackage() {
+        val events = listOf(
+            UsageEventLite("com.example.jedain", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 1_000L),
+            UsageEventLite("com.example.jedain", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 5_000L),
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED, 6_000L),
+            UsageEventLite("com.instagram.android", android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED, 8_000L),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = 0L,
+            endTime = 10_000L,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertFalse(result.containsKey("com.example.jedain"))
+        assertEquals(2_000L, result["com.instagram.android"])
+    }
+
+    @Test
+    fun computeForegroundMillis_crossMidnightSessionClampedToStartTime() {
+        val startTime = 100_000_000L
+        val endTime = startTime + 60L * 60_000L
+        val tenMinutesMillis = 10L * 60_000L
+        val fiveMinutesMillis = 5L * 60_000L
+
+        val events = listOf(
+            UsageEventLite(
+                packageName = "com.instagram.android",
+                eventType = android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED,
+                timeStamp = startTime - tenMinutesMillis,
+            ),
+            UsageEventLite(
+                packageName = "com.instagram.android",
+                eventType = android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED,
+                timeStamp = startTime + fiveMinutesMillis,
+            ),
+        )
+        val result = computeForegroundMillis(
+            events = events,
+            startTime = startTime,
+            endTime = endTime,
+            ownPackage = "com.example.jedain",
+            supportsScreenEvents = true,
+        )
+        assertEquals(fiveMinutesMillis, result["com.instagram.android"])
+    }
+
+    @Test
+    fun resolveBubbleBorderColor_followsDailyTargetTiers() {
+        // Di bawah 80% target: warna netral tegas (0xFFBDBDBD terang, 0xFF4A4A4A gelap)
+        val neutralLight = FloatingBubbleService.resolveBubbleBorderColor(0.0, isDark = false)
+        val neutralLight79 = FloatingBubbleService.resolveBubbleBorderColor(0.79, isDark = false)
+        assertEquals(0xFFBDBDBD.toInt(), neutralLight)
+        assertEquals(0xFFBDBDBD.toInt(), neutralLight79)
+
+        val neutralDark = FloatingBubbleService.resolveBubbleBorderColor(0.5, isDark = true)
+        assertEquals(0xFF4A4A4A.toInt(), neutralDark)
+
+        // 80% sampai di bawah 100%: kuning/oranye
+        val warningLight80 = FloatingBubbleService.resolveBubbleBorderColor(0.80, isDark = false)
+        val warningLight99 = FloatingBubbleService.resolveBubbleBorderColor(0.99, isDark = false)
+        assertEquals(DurationYellowLight.toArgb(), warningLight80)
+        assertEquals(DurationYellowLight.toArgb(), warningLight99)
+
+        val warningDark85 = FloatingBubbleService.resolveBubbleBorderColor(0.85, isDark = true)
+        assertEquals(DurationYellowDark.toArgb(), warningDark85)
+
+        // 100% atau lebih: merah
+        val alertLight100 = FloatingBubbleService.resolveBubbleBorderColor(1.0, isDark = false)
+        val alertLight150 = FloatingBubbleService.resolveBubbleBorderColor(1.5, isDark = false)
+        assertEquals(DurationRedLight.toArgb(), alertLight100)
+        assertEquals(DurationRedLight.toArgb(), alertLight150)
+
+        val alertDark100 = FloatingBubbleService.resolveBubbleBorderColor(1.0, isDark = true)
+        assertEquals(DurationRedDark.toArgb(), alertDark100)
+    }
+
+    @Test
+    fun floatingBubbleController_constantsAndKeysMatchExpectation() {
+        assertEquals("jedain_prefs", FloatingBubbleController.PREFS_NAME)
+        assertEquals("floating_bubble_enabled", FloatingBubbleController.KEY_FLOATING_BUBBLE_ENABLED)
+        assertEquals("bubble_y", FloatingBubbleController.KEY_BUBBLE_Y)
+    }
+
+    @Test
+    fun formatTimerDigital_formatsDigitalTimerCorrectly() {
+        // 8 detik -> 08s
+        assertEquals("08s", FloatingBubbleService.formatTimerDigital(8_000L))
+        // 45 detik -> 45s
+        assertEquals("45s", FloatingBubbleService.formatTimerDigital(45_000L))
+        // 1 menit 5 detik -> 01:05
+        assertEquals("01:05", FloatingBubbleService.formatTimerDigital(65_000L))
+        // 5 menit 30 detik -> 05:30
+        assertEquals("05:30", FloatingBubbleService.formatTimerDigital(330_000L))
+        // 24 menit 8 detik -> 24:08
+        assertEquals("24:08", FloatingBubbleService.formatTimerDigital(1_448_000L))
+        // 1 jam 5 menit -> 1:05:00
+        assertEquals("1:05:00", FloatingBubbleService.formatTimerDigital(3_900_000L))
+        // 0 detik -> 00s
+        assertEquals("00s", FloatingBubbleService.formatTimerDigital(0L))
+        // Negatif -> 00s
+        assertEquals("00s", FloatingBubbleService.formatTimerDigital(-500L))
+    }
+
+    @Test
+    fun breakSessionManager_extensionMinutesTierMapping() {
+        // 1 min custom session (for quick emulator testing) -> +1 min
+        assertEquals(1, BreakSessionManager.getExtensionMinutes(1))
+        // 2 min custom session -> +1 min
+        assertEquals(1, BreakSessionManager.getExtensionMinutes(2))
+        // 5 min session -> +2 min
+        assertEquals(2, BreakSessionManager.getExtensionMinutes(5))
+        // 10 min session -> +3 min
+        assertEquals(3, BreakSessionManager.getExtensionMinutes(10))
+        // 15 min session -> +5 min
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(15))
+        // 20 min session -> +5 min
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(20))
+        // 30 min session -> +5 min
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(30))
+    }
+
+    @Test
+    fun breakSessionManager_confirmationTemplateFormatting() {
+        assertEquals(
+            "Saya sadar dan memilih melanjutkan selama 2 menit.",
+            BreakSessionManager.getConfirmationTemplate(2),
+        )
+        assertEquals(
+            "Saya sadar dan memilih melanjutkan selama 3 menit.",
+            BreakSessionManager.getConfirmationTemplate(3),
+        )
+        assertEquals(
+            "Saya sadar dan memilih melanjutkan selama 5 menit.",
+            BreakSessionManager.getConfirmationTemplate(5),
+        )
+    }
+
+    @Test
+    fun breakSessionManager_validateConfirmationInput_flexibleSpacingAndCasing() {
+        val template = BreakSessionManager.getConfirmationTemplate(3)
+
+        // Exact match
+        assertTrue(BreakSessionManager.validateConfirmationInput(
+            "Saya sadar dan memilih melanjutkan selama 3 menit.",
+            template,
+        ))
+
+        // Case insensitivity
+        assertTrue(BreakSessionManager.validateConfirmationInput(
+            "SAYA SADAR DAN MEMILIH MELANJUTKAN SELAMA 3 MENIT.",
+            template,
+        ))
+        assertTrue(BreakSessionManager.validateConfirmationInput(
+            "saya sadar dan memilih melanjutkan selama 3 menit.",
+            template,
+        ))
+
+        // Flexible spacing: leading, trailing, and multiple spaces between words
+        assertTrue(BreakSessionManager.validateConfirmationInput(
+            "   Saya    sadar   dan   memilih   melanjutkan   selama   3   menit.   ",
+            template,
+        ))
+
+        // Typo / wrong word
+        assertFalse(BreakSessionManager.validateConfirmationInput(
+            "Saya sadar memilih melanjutkan selama 3 menit.",
+            template,
+        ))
+        assertFalse(BreakSessionManager.validateConfirmationInput(
+            "Saya sadar dan ingin melanjutkan selama 3 menit.",
+            template,
+        ))
+
+        // Wrong extension duration number
+        assertFalse(BreakSessionManager.validateConfirmationInput(
+            "Saya sadar dan memilih melanjutkan selama 5 menit.",
+            template,
+        ))
+
+        // Missing punctuation or extra word
+        assertFalse(BreakSessionManager.validateConfirmationInput(
+            "Saya sadar dan memilih melanjutkan selama 3 menit lagi.",
+            template,
+        ))
+        assertFalse(BreakSessionManager.validateConfirmationInput(
+            "",
+            template,
+        ))
+    }
+
+    @Test
+    fun breakSessionManager_maxConsecutiveExtensionsAndRestDuration() {
+        assertEquals(2, BreakSessionManager.MAX_CONSECUTIVE_EXTENSIONS)
+        assertEquals(5L * 60L * 1000L, BreakSessionManager.REST_DURATION_MILLIS)
+    }
+
+    @Test
+    fun sessionReminderNotifications_channelAndIdsMatchRequirements() {
+        assertEquals("jedain_session_reminder_channel_v2", SessionReminderNotificationHelper.CHANNEL_ID)
+        assertEquals("jedain_session_reminder_channel", SessionReminderNotificationHelper.LEGACY_CHANNEL_ID)
+        assertEquals("Peringatan Sesi Jeda", SessionReminderNotificationHelper.CHANNEL_NAME)
+        assertEquals(
+            "Pengingat ketika waktu sesi penggunaan aplikasi hampir berakhir.",
+            SessionReminderNotificationHelper.CHANNEL_DESCRIPTION,
+        )
+        assertEquals(2001, SessionReminderNotificationHelper.NOTIF_ID_2MIN)
+        assertEquals(2002, SessionReminderNotificationHelper.NOTIF_ID_30SEC)
+        assertTrue(SessionReminderNotificationHelper.NOTIF_ID_2MIN != SessionReminderNotificationHelper.NOTIF_ID_30SEC)
+    }
+
+    @Test
+    fun sessionReminderNotifications_thresholdConstantsAndKeysMatchExpectation() {
+        assertEquals(120_000L, BreakSessionManager.TWO_MINUTES_MILLIS)
+        assertEquals(30_000L, BreakSessionManager.THIRTY_SECONDS_MILLIS)
+        assertEquals("notif_2min_sent", BreakSessionManager.KEY_NOTIF_2MIN_SENT)
+        assertEquals("notif_30sec_sent", BreakSessionManager.KEY_NOTIF_30SEC_SENT)
+    }
+
+    @Test
+    fun customSessionDuration_presetsAndValidationLimits() {
+        assertEquals(listOf(5, 10, 15, 20, 30), PresetSessionDurationMinutes)
+        assertEquals(1, TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES)
+        assertEquals(60, TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES)
+        assertEquals(25, TargetSettingsPreferences.DEFAULT_CUSTOM_SESSION_MINUTES)
+
+        // Validation clamping
+        assertEquals(1, validateSessionDurationMinutes(0))
+        assertEquals(1, validateSessionDurationMinutes(-5))
+        assertEquals(1, validateSessionDurationMinutes(1))
+        assertEquals(7, validateSessionDurationMinutes(7))
+        assertEquals(12, validateSessionDurationMinutes(12))
+        assertEquals(25, validateSessionDurationMinutes(25))
+        assertEquals(60, validateSessionDurationMinutes(60))
+        assertEquals(60, validateSessionDurationMinutes(61))
+        assertEquals(60, validateSessionDurationMinutes(120))
+    }
+
+    @Test
+    fun customSessionDuration_countdownFormattingMatchesFloatingBubble() {
+        // Skenario pengujian format awal countdown Floating Bubble
+        val sevenMinMillis = 7L * 60L * 1000L
+        val twelveMinMillis = 12L * 60L * 1000L
+        val twentyFiveMinMillis = 25L * 60L * 1000L
+        val fortyFiveMinMillis = 45L * 60L * 1000L
+        val sixtyMinMillis = 60L * 60L * 1000L
+
+        assertEquals("07:00", FloatingBubbleService.formatTimerDigital(sevenMinMillis))
+        assertEquals("12:00", FloatingBubbleService.formatTimerDigital(twelveMinMillis))
+        assertEquals("25:00", FloatingBubbleService.formatTimerDigital(twentyFiveMinMillis))
+        assertEquals("45:00", FloatingBubbleService.formatTimerDigital(fortyFiveMinMillis))
+        assertEquals("1:00:00", FloatingBubbleService.formatTimerDigital(sixtyMinMillis))
+    }
+
+    @Test
+    fun customSessionDuration_extensionMinutesMappingForCustomDurations() {
+        // Presets
+        assertEquals(2, BreakSessionManager.getExtensionMinutes(5))
+        assertEquals(3, BreakSessionManager.getExtensionMinutes(10))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(15))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(20))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(30))
+
+        // Custom durations
+        assertEquals(1, BreakSessionManager.getExtensionMinutes(1))
+        assertEquals(1, BreakSessionManager.getExtensionMinutes(2))
+        assertEquals(2, BreakSessionManager.getExtensionMinutes(3))
+        assertEquals(2, BreakSessionManager.getExtensionMinutes(4))
+        assertEquals(3, BreakSessionManager.getExtensionMinutes(7))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(12))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(25))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(45))
+        assertEquals(5, BreakSessionManager.getExtensionMinutes(60))
+    }
+
+    @Test
+    fun customSessionDuration_notificationThresholdLogic() {
+        fun shouldTrigger2Min(remainingMillis: Long, totalMillis: Long): Boolean {
+            return remainingMillis in (BreakSessionManager.THIRTY_SECONDS_MILLIS + 1L)..BreakSessionManager.TWO_MINUTES_MILLIS &&
+                totalMillis > BreakSessionManager.TWO_MINUTES_MILLIS
+        }
+
+        fun shouldTrigger30Sec(remainingMillis: Long, totalMillis: Long): Boolean {
+            return remainingMillis in 1L..BreakSessionManager.THIRTY_SECONDS_MILLIS &&
+                totalMillis > BreakSessionManager.THIRTY_SECONDS_MILLIS
+        }
+
+        // Custom 25 min (1_500_000 ms)
+        val total25m = 25L * 60L * 1000L
+        assertFalse(shouldTrigger2Min(total25m, total25m))
+        assertTrue(shouldTrigger2Min(120_000L, total25m))
+        assertTrue(shouldTrigger30Sec(30_000L, total25m))
+        assertFalse(shouldTrigger30Sec(0L, total25m))
+
+        // Custom 7 min (420_000 ms)
+        val total7m = 7L * 60L * 1000L
+        assertFalse(shouldTrigger2Min(total7m, total7m))
+        assertTrue(shouldTrigger2Min(119_000L, total7m))
+        assertTrue(shouldTrigger30Sec(30_000L, total7m))
+
+        // Custom 2 min (120_000 ms) - tidak memicu notifikasi 2 menit di awal
+        val total2m = 2L * 60L * 1000L
+        assertFalse(shouldTrigger2Min(total2m, total2m))
+        assertTrue(shouldTrigger30Sec(30_000L, total2m))
+
+        // Custom 1 min (60_000 ms) - tidak memicu notifikasi 2 menit, memicu 30 detik
+        val total1m = 1L * 60L * 1000L
+        assertFalse(shouldTrigger2Min(total1m, total1m))
+        assertTrue(shouldTrigger30Sec(30_000L, total1m))
+
+        // Durasi 30 detik atau kurang - tidak memicu 30 detik di awal
+        val total30s = 30_000L
+        assertFalse(shouldTrigger30Sec(total30s, total30s))
+    }
+
+    @Test
+    fun customSessionDuration_statePersistenceModel() {
+        val defaultState = TargetSettingsState()
+        assertEquals(10, defaultState.sessionDurationMinutes)
+        assertFalse(defaultState.isCustomSessionDuration)
+        assertEquals(25, defaultState.customSessionDurationMinutes)
+
+        // Custom 7 minutes
+        val customState = TargetSettingsState(
+            sessionDurationMinutes = 7,
+            isCustomSessionDuration = true,
+            customSessionDurationMinutes = 7,
+        )
+        assertEquals(7, customState.sessionDurationMinutes)
+        assertTrue(customState.isCustomSessionDuration)
+        assertEquals(7, customState.customSessionDurationMinutes)
     }
 }
