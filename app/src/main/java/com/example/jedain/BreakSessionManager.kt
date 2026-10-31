@@ -29,6 +29,14 @@ object BreakSessionManager {
     const val MAX_CONSECUTIVE_EXTENSIONS = 2
     const val REST_DURATION_MILLIS = 5L * 60L * 1000L
 
+    const val THREE_MINUTES_MILLIS = 3L * 60L * 1000L
+    const val SIXTY_SECONDS_MILLIS = 60L * 1000L
+
+    const val KEY_REMINDER_3MIN_SENT = "reminder_3min_sent"
+    const val KEY_REMINDER_60SEC_SENT = "reminder_60sec_sent"
+    const val KEY_REMINDER_COUNTDOWN_DISMISSED = "reminder_countdown_dismissed"
+
+    // Konstanta legacy dipertahankan untuk kompatibilitas dan unit testing
     const val KEY_NOTIF_2MIN_SENT = "notif_2min_sent"
     const val KEY_NOTIF_30SEC_SENT = "notif_30sec_sent"
 
@@ -124,6 +132,30 @@ object BreakSessionManager {
         return getConsecutiveExtensions(context) < MAX_CONSECUTIVE_EXTENSIONS
     }
 
+    fun is3MinReminderSent(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_REMINDER_3MIN_SENT, false)
+    }
+
+    fun set3MinReminderSent(context: Context, sent: Boolean) {
+        getPrefs(context).edit { putBoolean(KEY_REMINDER_3MIN_SENT, sent) }
+    }
+
+    fun is60SecReminderSent(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_REMINDER_60SEC_SENT, false)
+    }
+
+    fun set60SecReminderSent(context: Context, sent: Boolean) {
+        getPrefs(context).edit { putBoolean(KEY_REMINDER_60SEC_SENT, sent) }
+    }
+
+    fun isCountdownDismissed(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_REMINDER_COUNTDOWN_DISMISSED, false)
+    }
+
+    fun setCountdownDismissed(context: Context, dismissed: Boolean) {
+        getPrefs(context).edit { putBoolean(KEY_REMINDER_COUNTDOWN_DISMISSED, dismissed) }
+    }
+
     fun is2MinReminderSent(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_NOTIF_2MIN_SENT, false)
     }
@@ -142,41 +174,19 @@ object BreakSessionManager {
 
     fun resetReminderFlags(context: Context) {
         getPrefs(context).edit {
+            putBoolean(KEY_REMINDER_3MIN_SENT, false)
+            putBoolean(KEY_REMINDER_60SEC_SENT, false)
+            putBoolean(KEY_REMINDER_COUNTDOWN_DISMISSED, false)
             putBoolean(KEY_NOTIF_2MIN_SENT, false)
             putBoolean(KEY_NOTIF_30SEC_SENT, false)
         }
-        Log.d(TAG, "BreakSession reminder notification flags reset")
+        FloatingSnackbarManager.hideImmediate()
+        Log.d(TAG, "BreakSession reminder flags reset and FloatingSnackbar dismissed")
     }
 
     fun checkAndTriggerReminders(context: Context, remainingMillis: Long) {
-        val currentState = getSessionState(context)
-        if (currentState == BreakSessionState.RESTING || currentState == BreakSessionState.EXPIRED) {
-            return
-        }
-
-        val targetSettings = TargetSettingsPreferences(context).loadSettings()
-        if (!targetSettings.reminderOnSessionEnd) {
-            return
-        }
-
-        val totalSessionMillis = getTotalSessionMillis(context)
-
-        // Ambang 30 detik: ketika tersisa <= 30 detik dan > 0 detik
-        // Hanya picu jika total durasi sesi lebih dari 30 detik (tidak memaksakan di awal jika durasi <= 30 detik)
-        if (remainingMillis in 1L..THIRTY_SECONDS_MILLIS && totalSessionMillis > THIRTY_SECONDS_MILLIS) {
-            if (!is30SecReminderSent(context)) {
-                set30SecReminderSent(context, true)
-                SessionReminderNotificationHelper.send30SecondWarning(context)
-            }
-        }
-        // Ambang 2 menit: ketika tersisa <= 2 menit dan > 30 detik
-        // Hanya picu jika total durasi sesi lebih dari 2 menit
-        else if (remainingMillis in (THIRTY_SECONDS_MILLIS + 1L)..TWO_MINUTES_MILLIS && totalSessionMillis > TWO_MINUTES_MILLIS) {
-            if (!is2MinReminderSent(context)) {
-                set2MinReminderSent(context, true)
-                SessionReminderNotificationHelper.send2MinuteWarning(context)
-            }
-        }
+        // Logika pengingat jeda lama telah dipindahkan ke FloatingSnackbarManager melalui FloatingBubbleService
+        // Fungsi ini tetap ada untuk kompatibilitas pemanggilan internal tanpa memicu notifikasi ganda.
     }
 
     fun getConfiguredSessionMinutes(context: Context): Int {
@@ -357,6 +367,7 @@ object BreakSessionManager {
         val currentExtensions = getConsecutiveExtensions(context)
         val newExtensions = currentExtensions + 1
         lastMonotonicTime = SystemClock.elapsedRealtime()
+        resetReminderFlags(context)
         SessionReminderNotificationHelper.cancelAllReminders(context)
 
         getPrefs(context).edit {

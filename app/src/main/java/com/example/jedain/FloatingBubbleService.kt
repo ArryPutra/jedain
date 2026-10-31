@@ -133,7 +133,7 @@ class FloatingBubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         createNotificationChannel()
-        SessionReminderNotificationHelper.createNotificationChannel(this)
+        SessionReminderNotificationHelper.cancelAllReminders(this)
         val notification = buildForegroundNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -193,6 +193,7 @@ class FloatingBubbleService : Service() {
         stopUpdateLoop()
         serviceScope.cancel()
         unregisterScreenStateReceiver()
+        FloatingSnackbarManager.hideImmediate()
 
         if (isViewAttached) {
             bubbleView?.let { view ->
@@ -488,6 +489,7 @@ class FloatingBubbleService : Service() {
             return
         }
         lastInterventionLaunchTime = now
+        FloatingSnackbarManager.hideImmediate()
         SessionReminderNotificationHelper.cancelAllReminders(this)
         Log.d(TAG, "Launching InterventionActivity with mode=$mode")
         val intent = InterventionActivity.createIntent(this, mode)
@@ -516,6 +518,7 @@ class FloatingBubbleService : Service() {
                 if (isMonitoredAppOpen) {
                     if (isResting) {
                         setBubbleVisibility(false)
+                        FloatingSnackbarManager.hideImmediate()
                         startInterventionScreen(InterventionActivity.MODE_RESTING)
                     } else {
                         if (!wasMonitored) {
@@ -526,6 +529,7 @@ class FloatingBubbleService : Service() {
                         val expired = BreakSessionManager.tick(this@FloatingBubbleService)
                         if (expired) {
                             setBubbleVisibility(false)
+                            FloatingSnackbarManager.hideImmediate()
                             startInterventionScreen(InterventionActivity.MODE_EXPIRED)
                         } else {
                             val shouldShow = !isAppInForeground && controller.isEnabled()
@@ -538,6 +542,9 @@ class FloatingBubbleService : Service() {
                                 }
                                 updateRealtimeTimer()
                             }
+
+                            // Periksa dan tampilkan Floating Snackbar Pengingat Awal / Countdown
+                            checkAndTriggerFloatingSnackbar()
                         }
                     }
                 } else {
@@ -545,10 +552,63 @@ class FloatingBubbleService : Service() {
                         BreakSessionManager.onMonitoredAppExited(this@FloatingBubbleService)
                     }
                     setBubbleVisibility(false)
+                    FloatingSnackbarManager.hideImmediate()
                 }
 
                 tickCount++
                 delay(1.seconds)
+            }
+        }
+    }
+
+    private fun checkAndTriggerFloatingSnackbar() {
+        val targetSettings = targetPrefs.loadSettings()
+        if (!targetSettings.reminderOnSessionEnd) {
+            return
+        }
+
+        val remainingMillis = BreakSessionManager.getRemainingSessionMillis(this)
+        val totalSessionMillis = BreakSessionManager.getTotalSessionMillis(this)
+
+        // 1. Trigger 60 Detik: Countdown persiapan jeda sebelum batas waktu tercapai (remaining <= 60s)
+        if (remainingMillis in 1L..BreakSessionManager.SIXTY_SECONDS_MILLIS) {
+            val secondsLeft = ((remainingMillis + 999L) / 1000L).toInt().coerceIn(1, 60)
+
+            if (!BreakSessionManager.isCountdownDismissed(this)) {
+                if (FloatingSnackbarManager.getCurrentType() == FloatingSnackbarManager.SnackbarType.COUNTDOWN_60SEC &&
+                    FloatingSnackbarManager.isVisible()
+                ) {
+                    FloatingSnackbarManager.updateCountdown(secondsLeft)
+                } else if (!BreakSessionManager.is60SecReminderSent(this)) {
+                    BreakSessionManager.set60SecReminderSent(this, true)
+                    FloatingSnackbarManager.showCountdownReminder(
+                        context = this,
+                        secondsLeft = secondsLeft,
+                        onDismiss = {
+                            BreakSessionManager.setCountdownDismissed(this, true)
+                        },
+                        onTakeBreak = {
+                            startInterventionScreen(InterventionActivity.MODE_EXPIRED)
+                        },
+                    )
+                }
+            }
+        }
+        // 2. Trigger 3 Menit: One-time countdown threshold tepat saat sisa waktu mencapai 03:00 (remaining in 60s+1..3m)
+        else if (remainingMillis in (BreakSessionManager.SIXTY_SECONDS_MILLIS + 1L)..BreakSessionManager.THREE_MINUTES_MILLIS &&
+            totalSessionMillis >= BreakSessionManager.THREE_MINUTES_MILLIS
+        ) {
+            if (!BreakSessionManager.is3MinReminderSent(this)) {
+                BreakSessionManager.set3MinReminderSent(this, true)
+                FloatingSnackbarManager.showInitialReminder(
+                    context = this,
+                    onDismiss = {
+                        // Pengguna memilih tutup
+                    },
+                    onTakeBreak = {
+                        startInterventionScreen(InterventionActivity.MODE_EXPIRED)
+                    },
+                )
             }
         }
     }
@@ -695,6 +755,7 @@ class FloatingBubbleService : Service() {
                         Log.d(TAG, "ACTION_SCREEN_OFF received, stopping update loop")
                         currentForegroundPackage = null
                         setBubbleVisibility(false)
+                        FloatingSnackbarManager.hideImmediate()
                         stopUpdateLoop()
                     }
                 }

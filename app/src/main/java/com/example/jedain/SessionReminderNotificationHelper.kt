@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.app.NotificationCompat
 
 object SessionReminderNotificationHelper {
 
@@ -58,55 +57,15 @@ object SessionReminderNotificationHelper {
     }
 
     fun send2MinuteWarning(context: Context) {
-        if (!PermissionHelper.hasNotificationPermission(context)) {
-            Log.w(TAG, "POST_NOTIFICATIONS permission not granted, skipping 2-minute warning")
-            return
-        }
-
-        createNotificationChannel(context)
-
-        // Konfigurasi Heads-up Notification: PRIORITY_HIGH + DEFAULT_ALL + CATEGORY_REMINDER
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_jedain)
-            .setContentTitle("Waktu sesi hampir habis")
-            .setContentText("Sesi kamu tersisa 2 menit. Bersiaplah untuk mengambil jeda sejenak.")
-            .setContentIntent(getPendingIntent(context, 101))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .build()
-
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        manager?.notify(NOTIF_ID_2MIN, notification)
-        Log.d(TAG, "Sent 2-minute heads-up warning notification (id=$NOTIF_ID_2MIN, channel=$CHANNEL_ID)")
+        // Sistem notifikasi pengingat sesi lama telah digantikan oleh Floating Snackbar Reminder.
+        // Fungsi ini dinonaktifkan agar tidak ada notifikasi pengingat ganda.
+        Log.d(TAG, "Legacy 2-minute notification disabled; replaced by Floating Snackbar Reminder")
     }
 
     fun send30SecondWarning(context: Context) {
-        if (!PermissionHelper.hasNotificationPermission(context)) {
-            Log.w(TAG, "POST_NOTIFICATIONS permission not granted, skipping 30-second warning")
-            return
-        }
-
-        createNotificationChannel(context)
-
-        // Konfigurasi Heads-up Notification: PRIORITY_HIGH + DEFAULT_ALL + CATEGORY_REMINDER
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_jedain)
-            .setContentTitle("Sebentar lagi waktunya berhenti")
-            .setContentText("Sesi kamu akan segera berakhir. Bersiaplah menentukan langkah berikutnya.")
-            .setContentIntent(getPendingIntent(context, 102))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .build()
-
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        manager?.notify(NOTIF_ID_30SEC, notification)
-        Log.d(TAG, "Sent 30-second heads-up warning notification (id=$NOTIF_ID_30SEC, channel=$CHANNEL_ID)")
+        // Sistem notifikasi pengingat sesi lama telah digantikan oleh Floating Snackbar Reminder.
+        // Fungsi ini dinonaktifkan agar tidak ada notifikasi pengingat ganda.
+        Log.d(TAG, "Legacy 30-second notification disabled; replaced by Floating Snackbar Reminder")
     }
 
     fun cancelAllReminders(context: Context) {
