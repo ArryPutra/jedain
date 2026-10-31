@@ -4,7 +4,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -287,16 +286,6 @@ fun HomeScreen(
     var hasNotificationPermission by rememberSaveable {
         mutableStateOf(PermissionHelper.hasNotificationPermission(context))
     }
-    var isNotificationPermissionDenied by rememberSaveable {
-        mutableStateOf(false)
-    }
-
-    val recommendationNotificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { isGranted ->
-        hasNotificationPermission = isGranted
-        isNotificationPermissionDenied = !isGranted
-    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -304,7 +293,6 @@ fun HomeScreen(
         bubbleController.setEnabled(true)
         isBubbleEnabled = true
         hasNotificationPermission = true
-        isNotificationPermissionDenied = false
         FloatingBubbleService.start(context)
     }
 
@@ -323,26 +311,11 @@ fun HomeScreen(
 
                 val notifGranted = PermissionHelper.hasNotificationPermission(context)
                 hasNotificationPermission = notifGranted
-                if (notifGranted) {
-                    isNotificationPermissionDenied = false
-                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    val onEnableNotificationClick: () -> Unit = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (isNotificationPermissionDenied) {
-                PermissionHelper.openNotificationSettings(context)
-            } else {
-                recommendationNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        } else {
-            PermissionHelper.openNotificationSettings(context)
         }
     }
 
@@ -404,16 +377,31 @@ fun HomeScreen(
                     onNextPromptClick = onNextPromptClick,
                 )
 
-                // Kartu Status Izin Sistem (otomatis tersembunyi jika kedua izin sudah aktif)
-                if (!monitoredAppsUiState.hasUsageAccessPermission || !monitoredAppsUiState.hasOverlayPermission) {
+                // Kartu Status Izin Sistem (otomatis tersembunyi jika semua izin sudah aktif)
+                if (!monitoredAppsUiState.hasUsageAccessPermission ||
+                    !monitoredAppsUiState.hasOverlayPermission ||
+                    !hasNotificationPermission
+                ) {
                     PermissionSetupCard(
                         hasUsageAccessPermission = monitoredAppsUiState.hasUsageAccessPermission,
                         hasOverlayPermission = monitoredAppsUiState.hasOverlayPermission,
+                        hasNotificationPermission = hasNotificationPermission,
                         onRequestUsageAccess = {
-                            pendingDisclosurePermission = DisclosurePermissionType.USAGE_ACCESS
+                            if (monitoredAppsUiState.hasUsageAccessPermission) {
+                                PermissionHelper.openUsageAccessSettings(context)
+                            } else {
+                                pendingDisclosurePermission = DisclosurePermissionType.USAGE_ACCESS
+                            }
                         },
                         onRequestOverlayPermission = {
-                            pendingDisclosurePermission = DisclosurePermissionType.OVERLAY
+                            if (monitoredAppsUiState.hasOverlayPermission) {
+                                PermissionHelper.openOverlaySettings(context)
+                            } else {
+                                pendingDisclosurePermission = DisclosurePermissionType.OVERLAY
+                            }
+                        },
+                        onRequestNotificationPermission = {
+                            PermissionHelper.openNotificationSettings(context)
                         },
                     )
                 }
@@ -439,14 +427,6 @@ fun HomeScreen(
                     isEnabled = isBubbleEnabled,
                     onCheckedChange = onToggleBubble,
                 )
-
-                // Kartu Rekomendasi Notifikasi (hanya jika izin belum aktif)
-                if (!hasNotificationPermission) {
-                    NotificationRecommendationCard(
-                        isDenied = isNotificationPermissionDenied,
-                        onEnableClick = onEnableNotificationClick,
-                    )
-                }
 
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -554,133 +534,7 @@ fun FloatingBubbleCard(
     }
 }
 
-// --- Kartu Rekomendasi Aktivasi Notifikasi ---
 
-@Composable
-fun NotificationRecommendationCard(
-    isDenied: Boolean,
-    onEnableClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = JedaInTheme.colors
-
-    val title = if (isDenied) {
-        "Notifikasi belum aktif"
-    } else {
-        "Aktifkan notifikasi JedaIn"
-    }
-
-    val description = if (isDenied) {
-        "Kamu masih bisa menggunakan JedaIn. Aktifkan notifikasi melalui pengaturan perangkat agar tidak melewatkan pengingat sesi."
-    } else {
-        "Aktifkan notifikasi agar JedaIn bisa mengingatkanmu ketika waktu sesi hampir habis."
-    }
-
-    val buttonText = if (isDenied) {
-        "Buka Pengaturan"
-    } else {
-        "Aktifkan Notifikasi"
-    }
-
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = colors.surface,
-        border = BorderStroke(1.dp, colors.border),
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = colors.targetCard,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Notifications,
-                            contentDescription = "Ikon notifikasi",
-                            tint = colors.iconCharcoal,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = title,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textPrimary,
-                            modifier = Modifier.weight(1f),
-                        )
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(colors.warningBackground)
-                                .border(1.dp, colors.border, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                        ) {
-                            Text(
-                                text = "Belum aktif",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.textSecondary,
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = description,
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
-                        lineHeight = 18.sp,
-                    )
-                }
-            }
-
-            Button(
-                onClick = onEnableClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = colors.accent,
-                    contentColor = colors.surface,
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-            ) {
-                Text(
-                    text = buttonText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
-}
 
 // --- Subtle Organic Background Shapes ---
 
@@ -947,8 +801,10 @@ fun GreetingSection(
 private fun PermissionSetupCard(
     hasUsageAccessPermission: Boolean,
     hasOverlayPermission: Boolean,
+    hasNotificationPermission: Boolean,
     onRequestUsageAccess: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = JedaInTheme.colors
@@ -1018,6 +874,14 @@ private fun PermissionSetupCard(
                 isGranted = hasOverlayPermission,
                 onActionClick = onRequestOverlayPermission,
             )
+
+            PermissionStatusRow(
+                icon = Icons.Outlined.Notifications,
+                title = "Notifikasi JedaIn",
+                subtitle = "Izinkan JedaIn menampilkan notifikasi pengingat.",
+                isGranted = hasNotificationPermission,
+                onActionClick = onRequestNotificationPermission,
+            )
         }
     }
 }
@@ -1034,7 +898,11 @@ private fun PermissionStatusRow(
     val colors = JedaInTheme.colors
 
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onActionClick)
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1559,6 +1427,22 @@ private fun MonitoredAppRow(
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             color = colors.textPrimary,
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PermissionSetupCardPreview() {
+    JedaInTheme {
+        PermissionSetupCard(
+            hasUsageAccessPermission = true,
+            hasOverlayPermission = false,
+            hasNotificationPermission = false,
+            onRequestUsageAccess = {},
+            onRequestOverlayPermission = {},
+            onRequestNotificationPermission = {},
+            modifier = Modifier.padding(16.dp),
         )
     }
 }
