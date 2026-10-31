@@ -662,4 +662,177 @@ class ExampleUnitTest {
         assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 100, targetMinutes = 0))
         assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 100, targetMinutes = -1))
     }
+
+    @Test
+    fun testSessionIntentPrompt_rulesAndLifecycle() {
+        val fullSessionMillis = 15L * 60_000L
+
+        // 1. Sesi baru (belum ada sesi berjalan, belum dikonfirmasi): pertanyaan niat MUNCUL
+        assertTrue(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = fullSessionMillis,
+            )
+        )
+
+        // 2. Setelah memilih niat (selama sesi pemantauan berjalan, termasuk pindah aplikasi lalu kembali): TIDAK MUNCUL
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.ACTIVE,
+                isIntentConfirmed = true,
+                consecutiveExtensions = 0,
+                remainingMillis = fullSessionMillis - 30_000L,
+            )
+        )
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = true,
+                consecutiveExtensions = 0,
+                remainingMillis = fullSessionMillis - 30_000L,
+            )
+        )
+
+        // 3. Saat sesi habis di 00:00 (EXPIRED): TIDAK MUNCUL (tampilkan layar intervensi 00:00)
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.EXPIRED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = 0L,
+            )
+        )
+
+        // 4. Setelah memilih "Lanjutkan" di 00:00 (consecutiveExtensions > 0): TIDAK MUNCUL
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.ACTIVE,
+                isIntentConfirmed = true,
+                consecutiveExtensions = 1,
+                remainingMillis = 5L * 60_000L,
+            )
+        )
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 1,
+                remainingMillis = 5L * 60_000L,
+            )
+        )
+
+        // 5. Saat sesi jeda aktif (RESTING): TIDAK MUNCUL (tampilkan layar sesi jeda aktif)
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.RESTING,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = fullSessionMillis,
+            )
+        )
+
+        // 6. Setelah sesi jeda selesai (state kembali PAUSED, isIntentConfirmed direset ke false, extensions = 0): MUNCUL lagi
+        assertTrue(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = fullSessionMillis,
+            )
+        )
+
+        // 7. Pastikan daftar pilihan niat default tersedia di satu tempat
+        assertEquals(4, BreakSessionManager.DEFAULT_INTENT_CHOICES.size)
+        assertTrue(BreakSessionManager.DEFAULT_INTENT_CHOICES.contains("Cari hiburan sebentar"))
+        assertTrue(BreakSessionManager.DEFAULT_INTENT_CHOICES.contains("Cek pesan atau kabar"))
+        assertTrue(BreakSessionManager.DEFAULT_INTENT_CHOICES.contains("Cari informasi"))
+        assertTrue(BreakSessionManager.DEFAULT_INTENT_CHOICES.contains("Hanya kebiasaan, tidak tahu mau apa"))
+        assertEquals("INTENT_PROMPT", InterventionActivity.MODE_INTENT_PROMPT)
+    }
+
+    @Test
+    fun testBreathingButtonDelayLogic_constantsAndCalculations() {
+        assertEquals(5, InterventionActivity.BREATHING_BUTTON_DELAY_SECONDS)
+        assertEquals(5000L, InterventionActivity.BREATHING_BUTTON_DELAY_MILLIS)
+
+        val firstDisplay = 100_000L
+
+        // 1. Baru masuk layar (0 detik elapsed): tombol nonaktif, sisa penundaan 5 detik
+        assertFalse(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 100_000L,
+            )
+        )
+        assertEquals(
+            5000L,
+            InterventionActivity.calculateRemainingBreathingDelay(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 100_000L,
+            )
+        )
+
+        // 2. Berjalan 2 detik (misal layar diputar/Activity dibuat ulang): sisa 3 detik (TIDAK reset ke 5s!)
+        assertFalse(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 102_000L,
+            )
+        )
+        assertEquals(
+            3000L,
+            InterventionActivity.calculateRemainingBreathingDelay(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 102_000L,
+            )
+        )
+
+        // 3. Tepat sebelum 5 detik (4999 ms): masih nonaktif
+        assertFalse(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 104_999L,
+            )
+        )
+        assertEquals(
+            1L,
+            InterventionActivity.calculateRemainingBreathingDelay(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 104_999L,
+            )
+        )
+
+        // 4. Tepat 5 detik (5000 ms elapsed): tombol menjadi aktif, sisa delay 0 ms
+        assertTrue(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 105_000L,
+            )
+        )
+        assertEquals(
+            0L,
+            InterventionActivity.calculateRemainingBreathingDelay(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 105_000L,
+            )
+        )
+
+        // 5. Setelah 8 detik (> 5s): tetap aktif
+        assertTrue(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 108_000L,
+            )
+        )
+        assertEquals(
+            0L,
+            InterventionActivity.calculateRemainingBreathingDelay(
+                firstDisplayTimestamp = firstDisplay,
+                currentTimestamp = 108_000L,
+            )
+        )
+    }
 }
+

@@ -304,4 +304,133 @@ class ScreenTimeCalculatorTest {
         assertEquals(30_000L, result[tiktokPkg])
         assertFalse(result.containsKey(ownPkg))
     }
+
+    // 12. Transisi masuk ke TikTok Live (MainActivity PAUSED -> LivePlayActivity RESUMED -> MainActivity STOPPED)
+    @Test
+    fun scenario12_tiktokLiveTransitionKeepsBubbleForegroundAndScreenTimeContinuous() {
+        val start = 1_000_000L
+        val monitored = setOf(tiktokPkg)
+        val tracker = ForegroundAppTracker()
+
+        // Tick 1 (t=10s): Pengguna membuka feed TikTok (MainActivity)
+        val tick1Events = listOf(
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 10_000L, "com.ss.android.ugc.aweme.main.MainActivity"),
+        )
+        assertTrue(
+            tracker.processEvents(
+                events = tick1Events,
+                nowMillis = start + 10_500L,
+                monitoredPackages = monitored,
+                ownPackage = ownPkg,
+            ),
+        )
+
+        // Tick 2 (t=30s): Pengguna masuk ke TikTok Live:
+        // MainActivity PAUSED (t=30_000) -> LivePlayActivity RESUMED (t=30_050) -> MainActivity STOPPED (t=30_550)
+        val tick2Events = listOf(
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_PAUSED, start + 30_000L, "com.ss.android.ugc.aweme.main.MainActivity"),
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 30_050L, "com.ss.android.ugc.aweme.live.LivePlayActivity"),
+            UsageEventLite(tiktokPkg, EVENT_ACTIVITY_STOPPED, start + 30_550L, "com.ss.android.ugc.aweme.main.MainActivity"),
+        )
+        assertTrue(
+            "Floating bubble harus tetap mendeteksi TikTok di foreground setelah MainActivity STOPPED di Live",
+            tracker.processEvents(
+                events = tick2Events,
+                nowMillis = start + 31_000L,
+                monitoredPackages = monitored,
+                ownPackage = ownPkg,
+            ),
+        )
+
+        // Tick 3 (t=90s): Menonton Live selama 60 detik tanpa event baru (window query hanya mengembalikan event lama/kosong)
+        assertTrue(
+            "Selama menonton Live tanpa event baru, status foreground harus tetap true",
+            tracker.processEvents(
+                events = emptyList(),
+                nowMillis = start + 90_000L,
+                monitoredPackages = monitored,
+                ownPackage = ownPkg,
+            ),
+        )
+
+        // Tick 4 (t=120s): Keluar dari Live kembali ke feed (LivePlayActivity PAUSED -> MainActivity RESUMED -> LivePlayActivity STOPPED)
+        val tick4Events = listOf(
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_PAUSED, start + 120_000L, "com.ss.android.ugc.aweme.live.LivePlayActivity"),
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 120_040L, "com.ss.android.ugc.aweme.main.MainActivity"),
+            UsageEventLite(tiktokPkg, EVENT_ACTIVITY_STOPPED, start + 120_500L, "com.ss.android.ugc.aweme.live.LivePlayActivity"),
+        )
+        assertTrue(
+            "Kembali dari Live ke feed harus tetap mendeteksi TikTok di foreground",
+            tracker.processEvents(
+                events = tick4Events,
+                nowMillis = start + 121_000L,
+                monitoredPackages = monitored,
+                ownPackage = ownPkg,
+            ),
+        )
+
+        // Verifikasi juga perhitungan durasi computeForegroundMillis dari t=10s sampai t=150s (total 140 detik tanpa putus / double count)
+        val allEvents = tick1Events + tick2Events + tick4Events
+        val durationMap = computeForegroundMillis(
+            events = allEvents,
+            startTime = start,
+            endTime = start + 150_000L,
+            ownPackage = ownPkg,
+            supportsScreenEvents = true,
+        )
+        assertEquals(140_000L, durationMap[tiktokPkg])
+    }
+
+    // 13. Berpindah dari TikTok Live ke aplikasi tidak dipantau (Chrome) dan layar mati saat Live
+    @Test
+    fun scenario13_switchingToUnmonitoredAppOrScreenOffDuringLiveClearsForeground() {
+        val start = 1_000_000L
+        val monitored = setOf(tiktokPkg)
+        val tracker = ForegroundAppTracker()
+
+        // Masuk ke TikTok Live
+        tracker.processEvents(
+            events = listOf(
+                UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 10_000L, "LivePlayActivity"),
+            ),
+            nowMillis = start + 10_500L,
+            monitoredPackages = monitored,
+            ownPackage = ownPkg,
+        )
+        assertTrue(tracker.currentForegroundPackage == tiktokPkg)
+
+        // Pindah ke Chrome (aplikasi tidak dipantau)
+        val isMonitoredAfterChrome = tracker.processEvents(
+            events = listOf(
+                UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_PAUSED, start + 40_000L, "LivePlayActivity"),
+                UsageEventLite(chromePkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 40_050L, "ChromeTabbedActivity"),
+            ),
+            nowMillis = start + 41_000L,
+            monitoredPackages = monitored,
+            ownPackage = ownPkg,
+        )
+        assertFalse("Bubble harus hilang saat berpindah ke aplikasi yang tidak dipantau", isMonitoredAfterChrome)
+
+        // Kembali ke TikTok Live lalu layar dimatikan (SCREEN_NON_INTERACTIVE)
+        val isMonitoredBackInLive = tracker.processEvents(
+            events = listOf(
+                UsageEventLite(chromePkg, UsageEvents.Event.ACTIVITY_PAUSED, start + 50_000L, "ChromeTabbedActivity"),
+                UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, start + 50_020L, "LivePlayActivity"),
+            ),
+            nowMillis = start + 51_000L,
+            monitoredPackages = monitored,
+            ownPackage = ownPkg,
+        )
+        assertTrue(isMonitoredBackInLive)
+
+        val isMonitoredAfterScreenOff = tracker.processEvents(
+            events = listOf(
+                UsageEventLite("android", EVENT_SCREEN_NON_INTERACTIVE, start + 80_000L),
+            ),
+            nowMillis = start + 80_500L,
+            monitoredPackages = monitored,
+            ownPackage = ownPkg,
+        )
+        assertFalse("Bubble dan perhitungan waktu harus berhenti saat layar mati di tengah Live", isMonitoredAfterScreenOff)
+    }
 }

@@ -259,4 +259,119 @@ class FloatingSnackbarReminderTest {
         assertFalse(canLaunchIntervention(11_500L))
         assertTrue(canLaunchIntervention(12_500L))
     }
+
+    @Test
+    fun testIntentionReminderSnackbar_mappingAndPriorityRules() {
+        // 1. Tipe INTENTION_REMINDER tersedia
+        assertEquals(
+            FloatingSnackbarManager.SnackbarType.INTENTION_REMINDER,
+            FloatingSnackbarManager.SnackbarType.valueOf("INTENTION_REMINDER")
+        )
+
+        // 2. Pemetaan pesan niat sesuai spesifikasi
+        assertEquals(
+            "Cari hiburan secukupnya ya. Nikmati, lalu berhenti.",
+            BreakSessionManager.getIntentReminderMessage("Cari hiburan sebentar")
+        )
+        assertEquals(
+            "Cek kabar saja. Selesai, langsung keluar.",
+            BreakSessionManager.getIntentReminderMessage("Cek pesan atau kabar")
+        )
+        assertEquals(
+            "Cari yang kamu butuhkan, lalu selesai.",
+            BreakSessionManager.getIntentReminderMessage("Cari informasi")
+        )
+        assertEquals(
+            "Kamu membuka ini tanpa tujuan. Perlu lanjut?",
+            BreakSessionManager.getIntentReminderMessage("Hanya kebiasaan, tidak tahu mau apa")
+        )
+
+        // Fallback untuk teks tak dikenal
+        assertEquals(
+            "Gunakan waktu dengan bijak sesuai tujuanmu.",
+            BreakSessionManager.getIntentReminderMessage("Pilihan lain")
+        )
+
+        // 3. Aturan prioritas tabrakan: Snackbar 3m / 1m SELALU menang atas snackbar niat
+        fun shouldShowIntentionSnackbar(
+            hasPending: Boolean,
+            isResting: Boolean,
+            isExpired: Boolean,
+            reminderOnSessionEnd: Boolean,
+            remainingMillis: Long,
+            totalSessionMillis: Long,
+        ): Boolean {
+            if (!hasPending || isResting || isExpired) return false
+            if (reminderOnSessionEnd) {
+                val is60SecZone = remainingMillis in 1L..BreakSessionManager.SIXTY_SECONDS_MILLIS
+                val is3MinZone = remainingMillis in (BreakSessionManager.SIXTY_SECONDS_MILLIS + 1L)..BreakSessionManager.THREE_MINUTES_MILLIS &&
+                    totalSessionMillis >= BreakSessionManager.THREE_MINUTES_MILLIS
+                if (is60SecZone || is3MinZone) return false // 3m / 1m menang!
+            }
+            return true
+        }
+
+        val total15Min = 15L * 60_000L
+
+        // Normal: Sesi baru dimulai di sisa 15 menit -> Snackbar niat muncul
+        assertTrue(
+            shouldShowIntentionSnackbar(
+                hasPending = true,
+                isResting = false,
+                isExpired = false,
+                reminderOnSessionEnd = true,
+                remainingMillis = total15Min,
+                totalSessionMillis = total15Min,
+            )
+        )
+
+        // Bertabrakan dengan zona 60 detik -> Snackbar 60s menang, niat tidak muncul
+        assertFalse(
+            shouldShowIntentionSnackbar(
+                hasPending = true,
+                isResting = false,
+                isExpired = false,
+                reminderOnSessionEnd = true,
+                remainingMillis = 45_000L,
+                totalSessionMillis = total15Min,
+            )
+        )
+
+        // Bertabrakan dengan zona 3 menit -> Snackbar 3m menang, niat tidak muncul
+        assertFalse(
+            shouldShowIntentionSnackbar(
+                hasPending = true,
+                isResting = false,
+                isExpired = false,
+                reminderOnSessionEnd = true,
+                remainingMillis = 150_000L,
+                totalSessionMillis = total15Min,
+            )
+        )
+
+        // Sesi jeda aktif (RESTING) -> Tidak muncul
+        assertFalse(
+            shouldShowIntentionSnackbar(
+                hasPending = true,
+                isResting = true,
+                isExpired = false,
+                reminderOnSessionEnd = true,
+                remainingMillis = total15Min,
+                totalSessionMillis = total15Min,
+            )
+        )
+
+        // Sudah pernah ditampilkan (hasPending == false) -> Tidak muncul lagi
+        assertFalse(
+            shouldShowIntentionSnackbar(
+                hasPending = false,
+                isResting = false,
+                isExpired = false,
+                reminderOnSessionEnd = true,
+                remainingMillis = total15Min,
+                totalSessionMillis = total15Min,
+            )
+        )
+    }
 }
+

@@ -44,6 +44,7 @@ object FloatingSnackbarManager {
     enum class SnackbarType {
         INITIAL_3MIN,
         COUNTDOWN_60SEC,
+        INTENTION_REMINDER,
     }
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -51,6 +52,7 @@ object FloatingSnackbarManager {
 
     private var rootView: FrameLayout? = null
     private var cardView: LinearLayout? = null
+    private var tvHeaderTitle: TextView? = null
     private var tvHeadline: TextView? = null
     private var tvSubtitle: TextView? = null
     private var tvCountdownBadge: TextView? = null
@@ -133,6 +135,43 @@ object FloatingSnackbarManager {
                 // Nonaktifkan auto-dismiss: snackbar countdown 1 menit tetap tampil sampai ditutup manual
                 mainHandler.removeCallbacks(autoDismissRunnable)
             }
+        }
+    }
+
+    /**
+     * Menampilkan Floating Snackbar Tipe 3: Pengingat Niat Sesi (muncul 1x saat baru masuk aplikasi tujuan).
+     * Auto-dismiss setelah 7 detik, dapat ditutup manual.
+     * Tidak boleh tampil bersamaan dengan snackbar 3 menit atau 1 menit (prioritas lebih rendah).
+     */
+    fun showIntentionReminder(
+        context: Context,
+        intentChoice: String,
+        reminderMessage: String,
+        onDismiss: () -> Unit = {},
+    ) {
+        mainHandler.post {
+            if (!PermissionHelper.hasOverlayPermission(context)) {
+                Log.w(TAG, "Overlay permission not granted, skipping intention snackbar")
+                return@post
+            }
+
+            // Aturan prioritas: Jika snackbar 3 menit atau countdown 60 detik sedang aktif, abaikan
+            if (isViewAttached && (currentType == SnackbarType.INITIAL_3MIN || currentType == SnackbarType.COUNTDOWN_60SEC)) {
+                Log.d(TAG, "Higher priority snackbar ($currentType) is active, skipping intention snackbar")
+                return@post
+            }
+
+            onDismissCallback = onDismiss
+            onTakeBreakCallback = null
+
+            ensureViewCreated(context)
+            setupIntentionUI(intentChoice, reminderMessage)
+
+            attachAndAnimateIn(context, SnackbarType.INTENTION_REMINDER)
+
+            // Auto-dismiss setelah 7 detik
+            mainHandler.removeCallbacks(autoDismissRunnable)
+            mainHandler.postDelayed(autoDismissRunnable, AUTO_DISMISS_DURATION_MS)
         }
     }
 
@@ -238,6 +277,7 @@ object FloatingSnackbarManager {
         currentType = null
         rootView = null
         cardView = null
+        tvHeaderTitle = null
         tvHeadline = null
         tvSubtitle = null
         tvCountdownBadge = null
@@ -316,6 +356,7 @@ object FloatingSnackbarManager {
             setTextColor(Color.WHITE)
             setPadding((8 * density).roundToInt(), 0, 0, 0)
         }
+        tvHeaderTitle = titleView
         headerRow.addView(titleView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val countdownBadge = TextView(context).apply {
@@ -505,20 +546,32 @@ object FloatingSnackbarManager {
     }
 
     private fun setupInitial3MinUI() {
+        tvHeaderTitle?.text = "JedaIn"
         tvCountdownBadge?.visibility = View.GONE
         countdownProgressContainer?.visibility = View.GONE
 
         tvHeadline?.text = "Waktunya segera jeda!"
         tvSubtitle?.text = "Tinggal 3 menit lagi. Selesaikan aktivitasmu dan bersiap untuk beristirahat sejenak dari layar."
+
+        btnDismiss?.visibility = View.VISIBLE
+        btnDismiss?.text = "Tutup"
+        btnTakeBreak?.visibility = View.VISIBLE
+        btnTakeBreak?.text = "Ambil jeda"
     }
 
     private fun setupCountdownUI(secondsLeft: Int) {
+        tvHeaderTitle?.text = "JedaIn"
         val clamped = secondsLeft.coerceIn(0, 60)
         tvCountdownBadge?.visibility = View.VISIBLE
         tvCountdownBadge?.text = formatCountdownText(clamped)
 
         countdownProgressContainer?.visibility = View.VISIBLE
         progressBar?.progress = clamped
+
+        btnDismiss?.visibility = View.VISIBLE
+        btnDismiss?.text = "Tutup"
+        btnTakeBreak?.visibility = View.VISIBLE
+        btnTakeBreak?.text = "Ambil jeda"
 
         if (clamped == 0) {
             tvCountdownBadge?.setTextColor(Color.parseColor("#EF4444"))
@@ -533,6 +586,19 @@ object FloatingSnackbarManager {
             tvHeadline?.text = "Waktumu hampir habis!"
             tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
         }
+    }
+
+    private fun setupIntentionUI(intentChoice: String, reminderMessage: String) {
+        tvHeaderTitle?.text = "JedaIn · Niat Kamu"
+        tvCountdownBadge?.visibility = View.GONE
+        countdownProgressContainer?.visibility = View.GONE
+
+        tvHeadline?.text = intentChoice
+        tvSubtitle?.text = reminderMessage
+
+        btnDismiss?.visibility = View.VISIBLE
+        btnDismiss?.text = "Tutup"
+        btnTakeBreak?.visibility = View.GONE
     }
 
     private fun attachAndAnimateIn(context: Context, type: SnackbarType) {

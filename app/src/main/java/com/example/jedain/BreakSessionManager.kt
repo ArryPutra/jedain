@@ -34,6 +34,30 @@ object BreakSessionManager {
     const val KEY_LAST_REST_IS_CUSTOM = "last_rest_is_custom"
     const val KEY_TOTAL_REST_MILLIS = "total_rest_millis"
 
+    const val KEY_SESSION_INTENT_CONFIRMED = "session_intent_confirmed"
+    const val KEY_LAST_SESSION_INTENT = "last_session_intent"
+    const val KEY_PENDING_INTENT_SNACKBAR = "pending_intent_snackbar"
+
+    val DEFAULT_INTENT_CHOICES = listOf(
+        "Cari hiburan sebentar",
+        "Cek pesan atau kabar",
+        "Cari informasi",
+        "Hanya kebiasaan, tidak tahu mau apa",
+    )
+
+    val INTENT_REMINDER_MESSAGES = mapOf(
+        "Cari hiburan sebentar" to "Cari hiburan secukupnya ya. Nikmati, lalu berhenti.",
+        "Cek pesan atau kabar" to "Cek kabar saja. Selesai, langsung keluar.",
+        "Cari informasi" to "Cari yang kamu butuhkan, lalu selesai.",
+        "Hanya kebiasaan, tidak tahu mau apa" to "Kamu membuka ini tanpa tujuan. Perlu lanjut?",
+        "Hanya kebiasaan, tidak tahu" to "Kamu membuka ini tanpa tujuan. Perlu lanjut?",
+    )
+
+    fun getIntentReminderMessage(intentChoice: String): String {
+        return INTENT_REMINDER_MESSAGES[intentChoice]
+            ?: "Gunakan waktu dengan bijak sesuai tujuanmu."
+    }
+
     const val THREE_MINUTES_MILLIS = 3L * 60L * 1000L
     const val SIXTY_SECONDS_MILLIS = 60L * 1000L
 
@@ -199,6 +223,70 @@ object BreakSessionManager {
         return targetSettings.sessionDurationMinutes.coerceAtLeast(1)
     }
 
+    internal fun shouldShowIntentPrompt(
+        state: BreakSessionState,
+        isIntentConfirmed: Boolean,
+        consecutiveExtensions: Int,
+        remainingMillis: Long,
+    ): Boolean {
+        if (state == BreakSessionState.RESTING || state == BreakSessionState.EXPIRED) {
+            return false
+        }
+        if (consecutiveExtensions > 0) {
+            return false
+        }
+        if (remainingMillis <= 0L) {
+            return false
+        }
+        return !isIntentConfirmed
+    }
+
+    fun needsIntentPrompt(context: Context): Boolean {
+        ensureInitialized(context)
+        val state = getSessionState(context)
+        val prefs = getPrefs(context)
+        val remaining = prefs.getLong(KEY_REMAINING_MILLIS, 0L)
+        val total = prefs.getLong(KEY_TOTAL_SESSION_MILLIS, 0L)
+        val isConfirmed = if (prefs.contains(KEY_SESSION_INTENT_CONFIRMED)) {
+            prefs.getBoolean(KEY_SESSION_INTENT_CONFIRMED, false)
+        } else {
+            remaining in 1L until total
+        }
+        val extensions = prefs.getInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+        return shouldShowIntentPrompt(
+            state = state,
+            isIntentConfirmed = isConfirmed,
+            consecutiveExtensions = extensions,
+            remainingMillis = remaining,
+        )
+    }
+
+    fun hasPendingIntentSnackbar(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
+    }
+
+    fun clearPendingIntentSnackbar(context: Context) {
+        getPrefs(context).edit {
+            putBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
+        }
+    }
+
+    fun confirmSessionIntent(context: Context, selectedIntent: String) {
+        ensureInitialized(context)
+        lastMonotonicTime = SystemClock.elapsedRealtime()
+        getPrefs(context).edit {
+            putBoolean(KEY_SESSION_INTENT_CONFIRMED, true)
+            putString(KEY_LAST_SESSION_INTENT, selectedIntent)
+            putBoolean(KEY_PENDING_INTENT_SNACKBAR, true)
+            putString(KEY_STATE, BreakSessionState.ACTIVE.name)
+        }
+        Log.d(TAG, "Session intent confirmed: '$selectedIntent'")
+    }
+
+    fun getLastSessionIntent(context: Context): String? {
+        return getPrefs(context).getString(KEY_LAST_SESSION_INTENT, null)
+    }
+
     fun resetSession(context: Context) {
         val configuredMinutes = getConfiguredSessionMinutes(context)
         val sessionMillis = configuredMinutes * 60L * 1000L
@@ -211,13 +299,10 @@ object BreakSessionManager {
             putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
             putInt(KEY_CONFIGURED_SESSION_MINUTES, configuredMinutes)
             putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+            putBoolean(KEY_SESSION_INTENT_CONFIRMED, false)
+            putBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
             if (currentState != BreakSessionState.RESTING) {
-                val nextState = if (currentState == BreakSessionState.ACTIVE) {
-                    BreakSessionState.ACTIVE.name
-                } else {
-                    BreakSessionState.PAUSED.name
-                }
-                putString(KEY_STATE, nextState)
+                putString(KEY_STATE, BreakSessionState.PAUSED.name)
             }
         }
         Log.d(TAG, "BreakSession reset to $configuredMinutes minutes ($sessionMillis ms)")
@@ -240,13 +325,10 @@ object BreakSessionManager {
                 putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
                 putInt(KEY_CONFIGURED_SESSION_MINUTES, configuredMinutes)
                 putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+                putBoolean(KEY_SESSION_INTENT_CONFIRMED, false)
+                putBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
                 if (currentState != BreakSessionState.RESTING) {
-                    val nextState = if (currentState == BreakSessionState.ACTIVE) {
-                        BreakSessionState.ACTIVE.name
-                    } else {
-                        BreakSessionState.PAUSED.name
-                    }
-                    putString(KEY_STATE, nextState)
+                    putString(KEY_STATE, BreakSessionState.PAUSED.name)
                 }
             }
             Log.d(TAG, "BreakSessionManager initialized with $configuredMinutes minutes ($sessionMillis ms)")
@@ -261,6 +343,10 @@ object BreakSessionManager {
         }
 
         ensureInitialized(context)
+        if (needsIntentPrompt(context)) {
+            lastMonotonicTime = 0L
+            return
+        }
         lastMonotonicTime = SystemClock.elapsedRealtime()
 
         if (currentState == BreakSessionState.PAUSED) {
@@ -299,6 +385,12 @@ object BreakSessionManager {
             return true
         }
 
+        ensureInitialized(context)
+        if (needsIntentPrompt(context)) {
+            lastMonotonicTime = 0L
+            return false
+        }
+
         // Jika tick() berjalan, aplikasi yang dipantau sedang aktif. Pastikan status ACTIVE.
         if (currentState == BreakSessionState.PAUSED) {
             getPrefs(context).edit {
@@ -307,7 +399,6 @@ object BreakSessionManager {
             Log.d(TAG, "BreakSession state -> ACTIVE (via tick)")
         }
 
-        ensureInitialized(context)
         val nowMonotonic = SystemClock.elapsedRealtime()
         if (lastMonotonicTime <= 0L) {
             lastMonotonicTime = nowMonotonic
@@ -394,6 +485,8 @@ object BreakSessionManager {
             putLong(KEY_REMAINING_MILLIS, sessionMillis)
             putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
             putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
+            putBoolean(KEY_SESSION_INTENT_CONFIRMED, false)
+            putBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
             putString(KEY_STATE, BreakSessionState.PAUSED.name)
             remove(KEY_REST_END_TIME)
             remove(KEY_TOTAL_REST_MILLIS)
@@ -413,6 +506,8 @@ object BreakSessionManager {
             putLong(KEY_REMAINING_MILLIS, extensionMillis)
             putLong(KEY_TOTAL_SESSION_MILLIS, extensionMillis)
             putInt(KEY_CONSECUTIVE_EXTENSIONS, newExtensions)
+            putBoolean(KEY_SESSION_INTENT_CONFIRMED, true)
+            putBoolean(KEY_PENDING_INTENT_SNACKBAR, false)
             putString(KEY_STATE, BreakSessionState.ACTIVE.name)
         }
 

@@ -3,6 +3,7 @@ package com.example.jedain
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -11,6 +12,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -74,6 +76,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -89,32 +92,95 @@ import kotlinx.coroutines.delay
 
 class InterventionActivity : ComponentActivity() {
 
+    private var modeState by mutableStateOf(MODE_EXPIRED)
+    private var targetPackageState by mutableStateOf<String?>(null)
+    private var targetAppNameState by mutableStateOf("aplikasi ini")
+    private var intentVersion by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        applyIncomingIntent(intent)
 
-        val initialMode = intent?.getStringExtra(EXTRA_MODE) ?: run {
+        setContent {
+            JedaInTheme {
+                InterventionScreen(
+                    initialMode = modeState,
+                    targetAppName = targetAppNameState,
+                    intentVersion = intentVersion,
+                    onFinishActivity = {
+                        isInterventionShowing = false
+                        finish()
+                    },
+                    onReturnToTargetApp = {
+                        returnToTargetApp(targetPackageState)
+                    },
+                    onCancelIntentPrompt = {
+                        isInterventionShowing = false
+                        FloatingBubbleService.onIntentPromptCancelled()
+                        navigateToHomeScreen()
+                    },
+                    onNavigateHome = {
+                        isInterventionShowing = false
+                        navigateToHomeScreen()
+                    },
+                )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isInterventionShowing = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isInterventionShowing = false
+    }
+
+    override fun onStop() {
+        super.onStop()
+        isInterventionShowing = false
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIncomingIntent(intent)
+    }
+
+    private fun applyIncomingIntent(incoming: Intent?) {
+        val resolvedMode = incoming?.getStringExtra(EXTRA_MODE) ?: run {
             if (BreakSessionManager.isResting(this)) {
                 InterventionViewMode.RESTING.name
             } else {
                 InterventionViewMode.EXPIRED.name
             }
         }
+        val pkg = incoming?.getStringExtra(EXTRA_TARGET_PACKAGE)
+        val appName = incoming?.getStringExtra(EXTRA_TARGET_APP_NAME)
+            ?.takeIf { it.isNotBlank() }
+            ?: resolveAppDisplayName(this, pkg)
 
-        setContent {
-            JedaInTheme {
-                InterventionScreen(
-                    initialMode = initialMode,
-                    onFinishActivity = { finish() },
-                    onNavigateHome = { navigateToHomeScreen() },
-                )
-            }
-        }
+        modeState = resolvedMode
+        targetPackageState = pkg
+        targetAppNameState = appName
+        intentVersion++
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
+    private fun returnToTargetApp(targetPackage: String?) {
+        isInterventionShowing = false
+        val movedToBack = moveTaskToBack(true)
+        if (!movedToBack && !targetPackage.isNullOrBlank() && targetPackage != packageName) {
+            val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (launchIntent != null) {
+                runCatching { startActivity(launchIntent) }
+            }
+        }
+        finish()
     }
 
     private fun navigateToHomeScreen() {
@@ -128,19 +194,67 @@ class InterventionActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_MODE = "extra_intervention_mode"
+        const val EXTRA_TARGET_PACKAGE = "extra_target_package"
+        const val EXTRA_TARGET_APP_NAME = "extra_target_app_name"
+        const val MODE_INTENT_PROMPT = "INTENT_PROMPT"
         const val MODE_EXPIRED = "EXPIRED"
         const val MODE_RESTING = "RESTING"
 
-        fun createIntent(context: Context, mode: String = MODE_EXPIRED): Intent {
+        const val BREATHING_BUTTON_DELAY_SECONDS = 5
+        const val BREATHING_BUTTON_DELAY_MILLIS = BREATHING_BUTTON_DELAY_SECONDS * 1000L
+
+        internal fun isBreathingButtonDelayFinished(
+            firstDisplayTimestamp: Long,
+            currentTimestamp: Long,
+            delayMillis: Long = BREATHING_BUTTON_DELAY_MILLIS,
+        ): Boolean {
+            return (currentTimestamp - firstDisplayTimestamp) >= delayMillis
+        }
+
+        internal fun calculateRemainingBreathingDelay(
+            firstDisplayTimestamp: Long,
+            currentTimestamp: Long,
+            delayMillis: Long = BREATHING_BUTTON_DELAY_MILLIS,
+        ): Long {
+            val elapsed = currentTimestamp - firstDisplayTimestamp
+            return (delayMillis - elapsed).coerceAtLeast(0L)
+        }
+
+        @Volatile
+        var isInterventionShowing: Boolean = false
+            private set
+
+        fun resolveAppDisplayName(context: Context, packageName: String?): String {
+            if (packageName.isNullOrBlank()) return "aplikasi ini"
+            val pm = context.packageManager
+            return runCatching {
+                @Suppress("DEPRECATION")
+                val appInfo = pm.getApplicationInfo(packageName, 0)
+                pm.getApplicationLabel(appInfo).toString().trim().ifBlank { "aplikasi ini" }
+            }.getOrDefault("aplikasi ini")
+        }
+
+        @JvmOverloads
+        fun createIntent(
+            context: Context,
+            mode: String = MODE_EXPIRED,
+            targetPackage: String? = null,
+        ): Intent {
+            val appName = resolveAppDisplayName(context, targetPackage)
             return Intent(context, InterventionActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra(EXTRA_MODE, mode)
+                if (!targetPackage.isNullOrBlank()) {
+                    putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
+                    putExtra(EXTRA_TARGET_APP_NAME, appName)
+                }
             }
         }
     }
 }
 
 enum class InterventionViewMode {
+    INTENT_PROMPT,
     EXPIRED,
     RESTING,
     BREATHING,
@@ -150,7 +264,11 @@ enum class InterventionViewMode {
 @Composable
 fun InterventionScreen(
     initialMode: String,
+    targetAppName: String = "aplikasi ini",
+    intentVersion: Int = 0,
     onFinishActivity: () -> Unit,
+    onReturnToTargetApp: () -> Unit = onFinishActivity,
+    onCancelIntentPrompt: () -> Unit = {},
     onNavigateHome: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -163,14 +281,21 @@ fun InterventionScreen(
         )
     }
 
+    var showDurationSheet by rememberSaveable { mutableStateOf(false) }
+    var breathingSessionId by rememberSaveable { mutableIntStateOf(0) }
+
+    LaunchedEffect(intentVersion, initialMode) {
+        currentMode = runCatching { InterventionViewMode.valueOf(initialMode) }
+            .getOrDefault(InterventionViewMode.EXPIRED)
+        showDurationSheet = false
+    }
+
     val configuredMinutes = remember { BreakSessionManager.getConfiguredSessionMinutes(context) }
     val extensionMinutes = remember(configuredMinutes) {
         BreakSessionManager.getExtensionMinutes(configuredMinutes)
     }
     val canExtend = remember(currentMode) { BreakSessionManager.canExtend(context) }
     val consecutiveExtensions = remember(currentMode) { BreakSessionManager.getConsecutiveExtensions(context) }
-
-    var showDurationSheet by rememberSaveable { mutableStateOf(false) }
 
     // Intercept back button based on active step
     BackHandler {
@@ -179,6 +304,9 @@ fun InterventionScreen(
             return@BackHandler
         }
         when (currentMode) {
+            InterventionViewMode.INTENT_PROMPT -> {
+                onCancelIntentPrompt()
+            }
             InterventionViewMode.CONFIRMATION -> {
                 currentMode = InterventionViewMode.BREATHING
             }
@@ -212,6 +340,21 @@ fun InterventionScreen(
                 modifier = Modifier.fillMaxSize(),
             ) { mode ->
                 when (mode) {
+                    InterventionViewMode.INTENT_PROMPT -> {
+                        SessionIntentPromptView(
+                            appName = targetAppName,
+                            choices = BreakSessionManager.DEFAULT_INTENT_CHOICES,
+                            onSelectIntent = { selectedChoice ->
+                                BreakSessionManager.confirmSessionIntent(context, selectedChoice)
+                                FloatingBubbleService.triggerPendingIntentSnackbar(context)
+                                onReturnToTargetApp()
+                            },
+                            onCancelAndBack = {
+                                onCancelIntentPrompt()
+                            },
+                        )
+                    }
+
                     InterventionViewMode.EXPIRED -> {
                         SessionExpiredView(
                             extensionMinutes = extensionMinutes,
@@ -221,6 +364,7 @@ fun InterventionScreen(
                                 showDurationSheet = true
                             },
                             onContinueSession = {
+                                breathingSessionId++
                                 currentMode = InterventionViewMode.BREATHING
                             },
                             onNavigateHome = onNavigateHome,
@@ -239,6 +383,7 @@ fun InterventionScreen(
 
                     InterventionViewMode.BREATHING -> {
                         BreathingReflectionView(
+                            breathingSessionId = breathingSessionId,
                             onProceedToConfirmation = {
                                 currentMode = InterventionViewMode.CONFIRMATION
                             },
@@ -254,7 +399,7 @@ fun InterventionScreen(
                             extensionMinutes = extensionMinutes,
                             onConfirmed = {
                                 BreakSessionManager.extendSession(context, extensionMinutes)
-                                onFinishActivity()
+                                onReturnToTargetApp()
                             },
                             onBack = {
                                 currentMode = InterventionViewMode.BREATHING
@@ -279,6 +424,116 @@ fun InterventionScreen(
                 currentMode = InterventionViewMode.RESTING
             },
         )
+    }
+}
+
+/**
+ * Layar Pertanyaan Niat saat memulai sesi pemantauan baru pada aplikasi terpantau.
+ */
+@Composable
+private fun SessionIntentPromptView(
+    appName: String,
+    choices: List<String>,
+    onSelectIntent: (String) -> Unit,
+    onCancelAndBack: () -> Unit,
+) {
+    val palette = JedaInTheme.colors
+    val displayAppName = appName.trim().ifBlank { "aplikasi ini" }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Spacer(modifier = Modifier.weight(1f))
+
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(palette.targetCard),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Spa,
+                contentDescription = null,
+                tint = palette.textPrimary,
+                modifier = Modifier.size(36.dp),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Mau apa buka $displayAppName?",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = palette.textPrimary,
+            textAlign = TextAlign.Center,
+            lineHeight = 30.sp,
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text(
+            text = "Pilih tujuanmu sebelum memulai sesi penggunaan.",
+            fontSize = 14.sp,
+            color = palette.textSecondary,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            choices.forEach { choice ->
+                Surface(
+                    onClick = { onSelectIntent(choice) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = palette.surface,
+                    border = BorderStroke(1.dp, palette.border),
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = choice,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textPrimary,
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        TextButton(
+            onClick = onCancelAndBack,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+        ) {
+            Text(
+                text = "Tidak jadi, kembali",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = palette.textSecondary,
+            )
+        }
     }
 }
 
@@ -693,10 +948,43 @@ private fun RestingCountdownView(
  */
 @Composable
 private fun BreathingReflectionView(
+    breathingSessionId: Int = 0,
     onProceedToConfirmation: () -> Unit,
     onCancelAndRest: () -> Unit,
 ) {
     val palette = JedaInTheme.colors
+
+    // Timestamp saat layar pertama kali ditampilkan, disimpan lintas rotasi/Activity recreation
+    val firstDisplayTimestamp = rememberSaveable(breathingSessionId) {
+        SystemClock.elapsedRealtime()
+    }
+
+    var isButtonEnabled by remember(breathingSessionId) {
+        mutableStateOf(
+            InterventionActivity.isBreathingButtonDelayFinished(
+                firstDisplayTimestamp = firstDisplayTimestamp,
+                currentTimestamp = SystemClock.elapsedRealtime(),
+            )
+        )
+    }
+
+    LaunchedEffect(firstDisplayTimestamp) {
+        val remaining = InterventionActivity.calculateRemainingBreathingDelay(
+            firstDisplayTimestamp = firstDisplayTimestamp,
+            currentTimestamp = SystemClock.elapsedRealtime(),
+        )
+        if (remaining > 0L) {
+            delay(remaining)
+        }
+        isButtonEnabled = true
+    }
+
+    // Transisi halus opasitas tombol (~300 ms) saat berubah menjadi aktif (redup 45% saat nonaktif)
+    val buttonAlpha by animateFloatAsState(
+        targetValue = if (isButtonEnabled) 1f else 0.45f,
+        animationSpec = tween(durationMillis = 300),
+        label = "breathingButtonAlpha",
+    )
 
     // Gentle pulsing animation for breathing
     val infiniteTransition = rememberInfiniteTransition(label = "breathingTransition")
@@ -801,13 +1089,17 @@ private fun BreathingReflectionView(
 
         Button(
             onClick = onProceedToConfirmation,
+            enabled = isButtonEnabled,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
+                .height(52.dp)
+                .graphicsLayer { alpha = buttonAlpha },
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = palette.accent,
                 contentColor = palette.surface,
+                disabledContainerColor = palette.accent,
+                disabledContentColor = palette.surface,
             ),
         ) {
             Text(

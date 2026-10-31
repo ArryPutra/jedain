@@ -105,8 +105,9 @@ class FloatingBubbleService : Service() {
     private var updateJob: Job? = null
     private var screenReceiver: BroadcastReceiver? = null
 
-    private var currentForegroundPackage: String? = null
-    private var lastUsageEventTimestamp: Long = 0L
+    private val foregroundTracker = ForegroundAppTracker()
+    private val currentForegroundPackage: String?
+        get() = foregroundTracker.currentForegroundPackage
 
     // Real-time monotonic screen time tracking
     private var baseTodayMillis: Long = 0L
@@ -486,7 +487,7 @@ class FloatingBubbleService : Service() {
 
     private var lastInterventionLaunchTime: Long = 0L
 
-    private fun startInterventionScreen(mode: String) {
+    private fun startInterventionScreen(mode: String, targetPackage: String? = null) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastInterventionLaunchTime < 2000L) {
             return
@@ -494,8 +495,8 @@ class FloatingBubbleService : Service() {
         lastInterventionLaunchTime = now
         FloatingSnackbarManager.hideImmediate()
         SessionReminderNotificationHelper.cancelAllReminders(this)
-        Log.d(TAG, "Launching InterventionActivity with mode=$mode")
-        val intent = InterventionActivity.createIntent(this, mode)
+        Log.d(TAG, "Launching InterventionActivity with mode=$mode, targetPackage=$targetPackage")
+        val intent = InterventionActivity.createIntent(this, mode, targetPackage)
         startActivity(intent)
     }
 
@@ -523,6 +524,14 @@ class FloatingBubbleService : Service() {
                         setBubbleVisibility(false)
                         FloatingSnackbarManager.hideImmediate()
                         startInterventionScreen(InterventionActivity.MODE_RESTING)
+                    } else if (BreakSessionManager.needsIntentPrompt(this@FloatingBubbleService)) {
+                        isMonitoredAppForegroundNow = false
+                        setBubbleVisibility(false)
+                        FloatingSnackbarManager.hideImmediate()
+                        startInterventionScreen(
+                            mode = InterventionActivity.MODE_INTENT_PROMPT,
+                            targetPackage = currentForegroundPackage,
+                        )
                     } else {
                         if (!wasMonitored) {
                             BreakSessionManager.onMonitoredAppEntered(this@FloatingBubbleService)
@@ -576,7 +585,50 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    private fun checkAndTriggerIntentionSnackbar() {
+        if (!BreakSessionManager.hasPendingIntentSnackbar(this)) {
+            return
+        }
+
+        // Jangan tampilkan jika sedang resting atau expired
+        if (BreakSessionManager.isResting(this) || BreakSessionManager.getSessionState(this) == BreakSessionState.EXPIRED) {
+            BreakSessionManager.clearPendingIntentSnackbar(this)
+            return
+        }
+
+        val remainingMillis = BreakSessionManager.getRemainingSessionMillis(this)
+        val targetSettings = targetPrefs.loadSettings()
+
+        // Jika setting pengingat sesi aktif dan kondisi 60s atau 3m terpenuhi, 3m/1m menang
+        if (targetSettings.reminderOnSessionEnd) {
+            val totalSessionMillis = BreakSessionManager.getTotalSessionMillis(this)
+            val is60SecZone = remainingMillis in 1L..BreakSessionManager.SIXTY_SECONDS_MILLIS
+            val is3MinZone = remainingMillis in (BreakSessionManager.SIXTY_SECONDS_MILLIS + 1L)..BreakSessionManager.THREE_MINUTES_MILLIS &&
+                totalSessionMillis >= BreakSessionManager.THREE_MINUTES_MILLIS
+
+            if (is60SecZone || is3MinZone) {
+                // Konflik dengan snackbar prioritas tinggi (3m / 1m), bersihkan pending snackbar niat
+                BreakSessionManager.clearPendingIntentSnackbar(this)
+                return
+            }
+        }
+
+        // Tampilkan snackbar niat sekali per sesi
+        BreakSessionManager.clearPendingIntentSnackbar(this)
+        val intentChoice = BreakSessionManager.getLastSessionIntent(this)
+        if (!intentChoice.isNullOrBlank()) {
+            val reminderMessage = BreakSessionManager.getIntentReminderMessage(intentChoice)
+            FloatingSnackbarManager.showIntentionReminder(
+                context = this,
+                intentChoice = intentChoice,
+                reminderMessage = reminderMessage,
+            )
+        }
+    }
+
     private fun checkAndTriggerFloatingSnackbar() {
+        checkAndTriggerIntentionSnackbar()
+
         val targetSettings = targetPrefs.loadSettings()
         if (!targetSettings.reminderOnSessionEnd) {
             return
@@ -710,8 +762,9 @@ class FloatingBubbleService : Service() {
             ?: return false
 
         val now = System.currentTimeMillis()
-        val queryStart = if (lastUsageEventTimestamp > 0L) {
-            (lastUsageEventTimestamp - 1000L).coerceAtLeast(now - 60_000L)
+        val lastEventTs = foregroundTracker.lastUsageEventTimestamp
+        val queryStart = if (lastEventTs > 0L) {
+            (lastEventTs - 1000L).coerceAtLeast(now - 60_000L)
         } else {
             now - 60_000L
         }
@@ -720,30 +773,36 @@ class FloatingBubbleService : Service() {
             usageStatsManager.queryEvents(queryStart, now)
         }.getOrNull() ?: return false
 
+        val liteEvents = ArrayList<UsageEventLite>()
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
-            lastUsageEventTimestamp = event.timeStamp.coerceAtLeast(lastUsageEventTimestamp)
-
-            when (event.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    currentForegroundPackage = event.packageName
-                }
-                UsageEvents.Event.ACTIVITY_PAUSED,
-                UsageEvents.Event.ACTIVITY_STOPPED -> {
-                    if (currentForegroundPackage == event.packageName) {
-                        currentForegroundPackage = null
-                    }
-                }
-                16, 17 -> { // SCREEN_NON_INTERACTIVE or KEYGUARD_SHOWN
-                    currentForegroundPackage = null
-                }
+            if (ForegroundAppTracker.isRelevantForegroundEvent(event.eventType)) {
+                liteEvents.add(
+                    UsageEventLite(
+                        packageName = event.packageName.orEmpty(),
+                        eventType = event.eventType,
+                        timeStamp = event.timeStamp,
+                        className = event.className.orEmpty(),
+                    ),
+                )
             }
         }
 
-        val activePkg = currentForegroundPackage
-        val isMonitored = activePkg != null && activePkg != packageName && activePkg in monitoredPackages
-        return isMonitored
+        val hasNewRelevantEvents = liteEvents.any { it.timeStamp >= lastEventTs }
+        return foregroundTracker.processEvents(
+            events = liteEvents,
+            nowMillis = now,
+            monitoredPackages = monitoredPackages,
+            ownPackage = packageName,
+            isOwnAppInForeground = isAppInForeground,
+            isInterventionShowing = InterventionActivity.isInterventionShowing,
+            diagnosticLog = if (BuildConfig.DEBUG && hasNewRelevantEvents) {
+                { msg -> Log.d(FG_DIAG_TAG, msg) }
+            } else {
+                null
+            },
+        )
     }
 
     private fun setBubbleVisibility(visible: Boolean) {
@@ -771,7 +830,7 @@ class FloatingBubbleService : Service() {
                     }
                     Intent.ACTION_SCREEN_OFF -> {
                         Log.d(TAG, "ACTION_SCREEN_OFF received, stopping update loop")
-                        currentForegroundPackage = null
+                        foregroundTracker.onScreenOff()
                         setBubbleVisibility(false)
                         FloatingSnackbarManager.hideImmediate()
                         stopUpdateLoop()
@@ -818,7 +877,8 @@ class FloatingBubbleService : Service() {
                 val isMonitored = checkIsMonitoredAppInForeground()
                 val isResting = BreakSessionManager.isResting(this@FloatingBubbleService)
                 val isExpired = BreakSessionManager.getSessionState(this@FloatingBubbleService) == BreakSessionState.EXPIRED
-                if (isMonitored && !isResting && !isExpired) {
+                val needsIntent = BreakSessionManager.needsIntentPrompt(this@FloatingBubbleService)
+                if (isMonitored && !isResting && !isExpired && !needsIntent) {
                     refreshScreenTimeBase()
                     setBubbleVisibility(controller.isEnabled())
                 } else {
@@ -933,6 +993,7 @@ class FloatingBubbleService : Service() {
 
     companion object {
         const val TAG = "JedaInBubble"
+        const val FG_DIAG_TAG = "JedaInFgDiag"
         const val ACTION_HIDE_BUBBLE = "com.example.jedain.ACTION_HIDE_BUBBLE"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "jedain_floating_bubble_channel"
@@ -969,6 +1030,24 @@ class FloatingBubbleService : Service() {
         fun setAppInForeground(inForeground: Boolean) {
             isAppInForeground = inForeground
             instanceRef?.get()?.updateAppVisibility(inForeground)
+        }
+
+        fun onIntentPromptCancelled() {
+            instanceRef?.get()?.let { service ->
+                service.foregroundTracker.reset()
+                service.isMonitoredAppForegroundNow = false
+                service.lastInterventionLaunchTime = SystemClock.elapsedRealtime()
+            }
+        }
+
+        fun triggerPendingIntentSnackbar(context: Context? = null) {
+            instanceRef?.get()?.serviceScope?.launch(Dispatchers.Main) {
+                val service = instanceRef?.get() ?: return@launch
+                val isMonitored = service.checkIsMonitoredAppInForeground()
+                if (isMonitored && !isAppInForeground && !InterventionActivity.isInterventionShowing) {
+                    service.checkAndTriggerIntentionSnackbar()
+                }
+            }
         }
 
         internal fun formatTimerDigital(millis: Long): String {

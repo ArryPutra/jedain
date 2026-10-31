@@ -43,6 +43,174 @@ internal const val EVENT_KEYGUARD_HIDDEN = 18
 internal const val EVENT_ACTIVITY_STOPPED = 23
 
 /**
+ * Toleransi jeda singkat antar-Activity di dalam satu package yang sama (misal: MainActivity ->
+ * RouterActivity -> LivePlayActivity di TikTok), di mana Activity lama mengirim ACTIVITY_PAUSED
+ * beberapa milidetik sebelum Activity baru di package yang sama mengirim ACTIVITY_RESUMED.
+ */
+internal const val INTRA_PACKAGE_TRANSITION_GRACE_MILLIS = 3_000L
+
+/**
+ * State machine incremental untuk mendeteksi package yang sedang berada di foreground
+ * secara real-time (dipakai oleh FloatingBubbleService).
+ *
+ * Prinsip utama:
+ * 1. Melacak himpunan Activity (className) yang sedang aktif pada package foreground saat ini,
+ *    sehingga event ACTIVITY_PAUSED / ACTIVITY_STOPPED terlambat dari Activity lama (mis. MainActivity
+ *    ketika sudah pindah ke LivePlayActivity di package yang sama) TIDAK menghapus status foreground.
+ * 2. Menerapkan deduplikasi event pada batas timestamp overlap (`lastUsageEventTimestamp`) agar
+ *    window pembacaan ulang tidak memproses event yang sama dua kali.
+ * 3. Mempertahankan status foreground selama masa transisi singkat antar-Activity (`INTRA_PACKAGE_TRANSITION_GRACE_MILLIS`)
+ *    selama belum ada bukti eksplisit bahwa aplikasi lain (atau Launcher/JedaIn) mengalami `ACTIVITY_RESUMED`
+ *    atau layar mati (`SCREEN_NON_INTERACTIVE` / `KEYGUARD_SHOWN`).
+ */
+class ForegroundAppTracker {
+    var currentForegroundPackage: String? = null
+        private set
+
+    var lastUsageEventTimestamp: Long = 0L
+        private set
+
+    private val activeActivities = HashSet<String>()
+    private var lastActivityPausedAtMillis: Long = 0L
+    private val processedEventsAtLastTimestamp = HashSet<String>()
+
+    fun reset() {
+        currentForegroundPackage = null
+        activeActivities.clear()
+        lastActivityPausedAtMillis = 0L
+    }
+
+    fun onScreenOff() {
+        reset()
+    }
+
+    /**
+     * Memproses daftar event baru secara kronologis dan mengembalikan apakah package terpantau
+     * sedang berada di foreground.
+     */
+    fun processEvents(
+        events: List<UsageEventLite>,
+        nowMillis: Long,
+        monitoredPackages: Set<String>,
+        ownPackage: String,
+        isOwnAppInForeground: Boolean = false,
+        isInterventionShowing: Boolean = false,
+        diagnosticLog: ((String) -> Unit)? = null,
+    ): Boolean {
+        for (event in events) {
+            val ts = event.timeStamp
+            if (ts < lastUsageEventTimestamp) {
+                continue
+            }
+
+            val pkg = event.packageName
+            val cls = event.className.ifBlank { "__default_activity__" }
+            val type = event.eventType
+
+            if (!isRelevantForegroundEvent(type)) {
+                continue
+            }
+
+            val signature = "$type|$pkg|$cls"
+            if (ts == lastUsageEventTimestamp) {
+                if (!processedEventsAtLastTimestamp.add(signature)) {
+                    continue
+                }
+            } else {
+                lastUsageEventTimestamp = ts
+                processedEventsAtLastTimestamp.clear()
+                processedEventsAtLastTimestamp.add(signature)
+            }
+
+            when (type) {
+            EVENT_MOVE_TO_FOREGROUND -> {
+                if (currentForegroundPackage != pkg) {
+                    currentForegroundPackage = pkg
+                    activeActivities.clear()
+                }
+                activeActivities.add(cls)
+                lastActivityPausedAtMillis = 0L
+            }
+
+            EVENT_MOVE_TO_BACKGROUND,
+            EVENT_ACTIVITY_STOPPED,
+            -> {
+                if (currentForegroundPackage == pkg) {
+                    if (cls == "__default_activity__") {
+                        activeActivities.clear()
+                    } else {
+                        activeActivities.remove(cls)
+                    }
+                    if (activeActivities.isEmpty() && lastActivityPausedAtMillis == 0L) {
+                        lastActivityPausedAtMillis = ts
+                    }
+                }
+            }
+
+            EVENT_SCREEN_NON_INTERACTIVE,
+            EVENT_KEYGUARD_SHOWN,
+            -> {
+                reset()
+            }
+        }
+
+        diagnosticLog?.invoke(
+            "UsageEvent pkg=$pkg class=$cls type=${eventTypeToName(type)}($type) ts=$ts -> " +
+                "currentPkg=$currentForegroundPackage activeActivities=$activeActivities",
+        )
+    }
+
+    // Jika seluruh Activity pada currentForegroundPackage sudah pause/stop dan tidak ada Activity baru
+    // yang resume setelah melewati batas toleransi transisi intra-package, lepaskan status foreground.
+    if (currentForegroundPackage != null &&
+        activeActivities.isEmpty() &&
+        lastActivityPausedAtMillis > 0L &&
+        nowMillis - lastActivityPausedAtMillis > INTRA_PACKAGE_TRANSITION_GRACE_MILLIS
+    ) {
+        diagnosticLog?.invoke(
+            "Grace period expired for pkg=$currentForegroundPackage " +
+                "(pausedAt=$lastActivityPausedAtMillis, now=$nowMillis) -> clearing foreground",
+        )
+        reset()
+    }
+
+    if (isOwnAppInForeground || isInterventionShowing) {
+        diagnosticLog?.invoke(
+            "Decision: monitored foreground = false (ownAppInFg=$isOwnAppInForeground, intervention=$isInterventionShowing)",
+        )
+        return false
+    }
+
+    val activePkg = currentForegroundPackage
+    val isMonitored = activePkg != null && activePkg != ownPackage && activePkg in monitoredPackages
+    diagnosticLog?.invoke(
+        "Decision: monitored foreground = $isMonitored (currentPkg=$activePkg, activeActivities=${activeActivities.size})",
+    )
+    return isMonitored
+}
+
+    companion object {
+        fun isRelevantForegroundEvent(eventType: Int): Boolean =
+            eventType == EVENT_MOVE_TO_FOREGROUND ||
+                eventType == EVENT_MOVE_TO_BACKGROUND ||
+                eventType == EVENT_ACTIVITY_STOPPED ||
+                eventType == EVENT_SCREEN_NON_INTERACTIVE ||
+                eventType == EVENT_KEYGUARD_SHOWN
+
+        fun eventTypeToName(eventType: Int): String = when (eventType) {
+            EVENT_MOVE_TO_FOREGROUND -> "ACTIVITY_RESUMED"
+            EVENT_MOVE_TO_BACKGROUND -> "ACTIVITY_PAUSED"
+            EVENT_ACTIVITY_STOPPED -> "ACTIVITY_STOPPED"
+            EVENT_SCREEN_INTERACTIVE -> "SCREEN_INTERACTIVE"
+            EVENT_SCREEN_NON_INTERACTIVE -> "SCREEN_NON_INTERACTIVE"
+            EVENT_KEYGUARD_SHOWN -> "KEYGUARD_SHOWN"
+            EVENT_KEYGUARD_HIDDEN -> "KEYGUARD_HIDDEN"
+            else -> "EVENT_$eventType"
+        }
+    }
+}
+
+/**
  * State machine kronologis untuk menghitung durasi penggunaan foreground per package
  * berdasarkan UsageEvents Android.
  *
@@ -81,6 +249,9 @@ fun computeForegroundMillis(
     val activeActivitiesPerPkg = HashMap<String, MutableSet<String>>()
     // Menyimpan waktu mulai sesi foreground saat ini untuk setiap package (ketika transisi dari 0 -> >=1 activity aktif)
     val packageSessionStartMap = HashMap<String, Long>()
+    // Menyimpan waktu pause terakhir ketika himpunan Activity suatu package baru saja kosong,
+    // untuk menyambung jeda singkat transisi antar-Activity di dalam package yang sama (misal MainActivity -> LivePlayActivity)
+    val pendingPauseTimeMap = HashMap<String, Long>()
 
     // Deduplikasi event identik berturut-turut pada timestamp yang sama
     var lastProcessedPkg = ""
@@ -104,9 +275,10 @@ fun computeForegroundMillis(
 
     fun closePackageSession(pkg: String, timestamp: Long, reason: String) {
         activeActivitiesPerPkg.remove(pkg)
+        val effectiveEnd = pendingPauseTimeMap.remove(pkg) ?: timestamp
         val start = packageSessionStartMap.remove(pkg)
         if (start != null) {
-            recordPackageSession(pkg, start, timestamp, reason)
+            recordPackageSession(pkg, start, effectiveEnd, reason)
         }
     }
 
@@ -117,6 +289,7 @@ fun computeForegroundMillis(
         }
         activeActivitiesPerPkg.clear()
         packageSessionStartMap.clear()
+        pendingPauseTimeMap.clear()
     }
 
     for (event in sortedEvents) {
@@ -172,9 +345,7 @@ fun computeForegroundMillis(
         // 2. Penanganan event siklus hidup Activity / Package
         when (type) {
             UsageEvents.Event.ACTIVITY_RESUMED -> {
-                // Jika JedaIn sendiri masuk ke foreground, tutup sesi aplikasi lain yang sebelumnya aktif
-                // (kecuali aplikasi lain menutup dirinya sendiri lewat PAUSED).
-                // Untuk transisi antar-aplikasi berbeda ketika event PAUSED dari aplikasi lama terlambat/hilang:
+                // Jika JedaIn sendiri atau aplikasi lain masuk ke foreground, tutup sesi aplikasi lain yang sebelumnya aktif
                 val otherActivePackages = packageSessionStartMap.keys.filter { it != pkg }
                 for (otherPkg in otherActivePackages) {
                     closePackageSession(otherPkg, rawTime, "SWITCH_TO_$pkg")
@@ -182,6 +353,23 @@ fun computeForegroundMillis(
 
                 if (pkg == ownPackage) {
                     continue
+                }
+
+                val pendingPauseTime = pendingPauseTimeMap.remove(pkg)
+                if (pendingPauseTime != null) {
+                    if (rawTime - pendingPauseTime <= INTRA_PACKAGE_TRANSITION_GRACE_MILLIS) {
+                        // Transisi antar-Activity di dalam package yang sama (misal MainActivity PAUSED -> LivePlayActivity RESUMED):
+                        // lanjutkan sesi tanpa menutupnya
+                        val activities = activeActivitiesPerPkg.getOrPut(pkg) { HashSet() }
+                        activities.add(cls)
+                        diagnosticLog?.invoke(
+                            "INTRA_PKG_TRANSITION_BRIDGED pkg=$pkg class=$cls gap=${rawTime - pendingPauseTime}ms at $rawTime",
+                        )
+                        continue
+                    } else {
+                        // Jeda terlalu lama (> grace period), tutup sesi sebelumnya pada waktu pause aslinya
+                        closePackageSession(pkg, pendingPauseTime, "PAUSED_BEFORE_REOPEN")
+                    }
                 }
 
                 val activities = activeActivitiesPerPkg.getOrPut(pkg) { HashSet() }
@@ -195,22 +383,34 @@ fun computeForegroundMillis(
                 }
             }
 
-            UsageEvents.Event.ACTIVITY_PAUSED,
-            EVENT_ACTIVITY_STOPPED,
-            -> {
+            UsageEvents.Event.ACTIVITY_PAUSED -> {
                 if (pkg == ownPackage) {
                     continue
                 }
                 val activities = activeActivitiesPerPkg[pkg]
                 if (activities != null) {
                     if (cls == "__default_activity__") {
-                        // Jika className tidak tersedia pada UsageEventLite, tutup seluruh sesi package
-                        closePackageSession(pkg, rawTime, "PAUSED_NO_CLASS(type=$type)")
+                        pendingPauseTimeMap.putIfAbsent(pkg, rawTime)
+                        activities.clear()
                     } else {
                         activities.remove(cls)
                         if (activities.isEmpty()) {
-                            closePackageSession(pkg, rawTime, "ALL_ACTIVITIES_PAUSED(type=$type)")
+                            // Tunggu sejenak apakah ada Activity lain dari package yang sama yang langsung RESUMED
+                            pendingPauseTimeMap.putIfAbsent(pkg, rawTime)
                         }
+                    }
+                }
+            }
+
+            EVENT_ACTIVITY_STOPPED -> {
+                if (pkg == ownPackage) {
+                    continue
+                }
+                val activities = activeActivitiesPerPkg[pkg]
+                if (activities != null && cls != "__default_activity__") {
+                    activities.remove(cls)
+                    if (activities.isEmpty() && !pendingPauseTimeMap.containsKey(pkg)) {
+                        pendingPauseTimeMap[pkg] = rawTime
                     }
                 }
             }
@@ -220,6 +420,9 @@ fun computeForegroundMillis(
     // 3. Tutup sesi yang masih aktif saat batas akhir query (endTime) tercapai
     val remainingPackages = packageSessionStartMap.keys.toList()
     for (pkg in remainingPackages) {
+        // Jika package sudah memiliki pendingPauseTimeMap[pkg], closePackageSession otomatis menutup
+        // pada waktu pause aslinya (effectiveEnd = pendingPauseTimeMap.remove(pkg) ?: endTime).
+        // Jika belum pause (masih aktif), tutup pada endTime.
         closePackageSession(pkg, endTime, "QUERY_END_TIME_REACHED")
     }
 
