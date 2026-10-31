@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">JedaIn</string>
+    <string name="widget_name">JedaIn Daily Awareness</string>
+    <string name="widget_description">Pantau waktu layar hari ini, target harian, dan aplikasi teratas langsung di home screen.</string>
+    <string name="widget_header_title">Screen Time Hari Ini</string>
+    <string name="widget_permission_title">Akses Penggunaan Diperlukan</string>
+    <string name="widget_permission_desc">Ketuk untuk mengaktifkan izin agar widget dapat membaca statistik waktu layar.</string>
+    <string name="widget_no_activity">Belum ada aktivitas</string>
+    <string name="widget_target_not_set">Target belum diatur</string>
+    <string name="widget_default_time">0m</string>
+    <string name="widget_default_target">0m / 3j</string>
+    <string name="widget_target_exceeded_label">Target terlampaui</string>
 </resources>

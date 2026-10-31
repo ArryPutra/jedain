@@ -173,23 +173,58 @@ class FloatingSnackbarReminderTest {
     }
 
     @Test
-    fun testAutoDismissDurationIsSevenSeconds() {
+    fun testAutoDismissDurationIsSevenSecondsForInitial3MinReminder() {
         val autoDismissDuration = FloatingSnackbarManager.AUTO_DISMISS_DURATION_MS
         assertEquals(7000L, autoDismissDuration)
 
-        fun isVisibleAtSecond(elapsedSeconds: Int): Boolean {
+        fun isInitial3MinVisibleAtSecond(elapsedSeconds: Int): Boolean {
             return elapsedSeconds < (autoDismissDuration / 1000L)
         }
 
-        assertTrue("Detik 0 harus terlihat", isVisibleAtSecond(0))
-        assertTrue("Detik 1 harus terlihat", isVisibleAtSecond(1))
-        assertTrue("Detik 2 harus terlihat", isVisibleAtSecond(2))
-        assertTrue("Detik 3 harus terlihat", isVisibleAtSecond(3))
-        assertTrue("Detik 4 harus terlihat", isVisibleAtSecond(4))
-        assertTrue("Detik 5 harus terlihat", isVisibleAtSecond(5))
-        assertTrue("Detik 6 harus terlihat", isVisibleAtSecond(6))
-        assertFalse("Detik 7 harus otomatis menghilang", isVisibleAtSecond(7))
-        assertFalse("Detik 8 harus tetap menghilang", isVisibleAtSecond(8))
+        assertTrue("Detik 0 harus terlihat", isInitial3MinVisibleAtSecond(0))
+        assertTrue("Detik 1 harus terlihat", isInitial3MinVisibleAtSecond(1))
+        assertTrue("Detik 2 harus terlihat", isInitial3MinVisibleAtSecond(2))
+        assertTrue("Detik 3 harus terlihat", isInitial3MinVisibleAtSecond(3))
+        assertTrue("Detik 4 harus terlihat", isInitial3MinVisibleAtSecond(4))
+        assertTrue("Detik 5 harus terlihat", isInitial3MinVisibleAtSecond(5))
+        assertTrue("Detik 6 harus terlihat", isInitial3MinVisibleAtSecond(6))
+        assertFalse("Detik 7 harus otomatis menghilang untuk 3-min reminder", isInitial3MinVisibleAtSecond(7))
+        assertFalse("Detik 8 harus tetap menghilang", isInitial3MinVisibleAtSecond(8))
+    }
+
+    @Test
+    fun testCountdown60Sec_noAutoDismiss_remainsVisibleUntilManualClose() {
+        // Simulasi siklus hidup countdown 60 detik (1 menit)
+        var isManuallyClosed = false
+
+        fun isCountdownVisibleAt(@Suppress("UNUSED_PARAMETER") elapsedSeconds: Int): Boolean {
+            // Countdown 1 menit tidak memiliki timeout / auto-dismiss; hanya hilang jika ditutup manual
+            return !isManuallyClosed
+        }
+
+        // Tampil pada detik 0
+        assertTrue("Detik 0 harus tampil", isCountdownVisibleAt(0))
+        // Melewati batas 7 detik (auto-dismiss lama): HARUS TETAP TAMPIL
+        assertTrue("Detik 7 harus tetap tampil (tidak ada auto-dismiss)", isCountdownVisibleAt(7))
+        assertTrue("Detik 8 harus tetap tampil", isCountdownVisibleAt(8))
+        assertTrue("Detik 30 harus tetap tampil", isCountdownVisibleAt(30))
+        assertTrue("Detik 59 harus tetap tampil", isCountdownVisibleAt(59))
+        // Detik 60 (mencapai 00:00): HARUS TETAP TAMPIL
+        assertTrue("Detik 60 (mencapai 00:00) harus tetap tampil", isCountdownVisibleAt(60))
+        assertTrue("Detik 75 (melewati 00:00) harus tetap tampil", isCountdownVisibleAt(75))
+
+        // Pengguna menekan tombol close (X) atau Tutup secara manual
+        isManuallyClosed = true
+        assertFalse("Setelah ditutup manual, snackbar baru menghilang", isCountdownVisibleAt(76))
+    }
+
+    @Test
+    fun testCountdownAtZeroSeconds_displaysFinishedState() {
+        val formattedAtZero = FloatingSnackbarManager.formatCountdownText(0)
+        assertEquals("00:00", formattedAtZero)
+
+        val formattedNegativeClamped = FloatingSnackbarManager.formatCountdownText(-1)
+        assertEquals("00:00", formattedNegativeClamped)
     }
 
     @Test

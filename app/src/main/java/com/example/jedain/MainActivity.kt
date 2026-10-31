@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
         if (controller.isEnabled() && PermissionHelper.hasOverlayPermission(this)) {
             FloatingBubbleService.start(this)
         }
+        DailyAwarenessWidgetProvider.updateAllWidgets(this)
     }
 
     override fun onStop() {

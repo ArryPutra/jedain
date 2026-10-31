@@ -58,6 +58,7 @@ object FloatingSnackbarManager {
     private var progressBar: ProgressBar? = null
     private var btnDismiss: TextView? = null
     private var btnTakeBreak: TextView? = null
+    private var btnClose: TextView? = null
 
     private var currentType: SnackbarType? = null
     private var isViewAttached = false
@@ -129,9 +130,8 @@ object FloatingSnackbarManager {
                 updateCountdown(secondsLeft)
             } else {
                 attachAndAnimateIn(context, SnackbarType.COUNTDOWN_60SEC)
-                // Auto-dismiss setelah 7 detik untuk countdown snackbar
+                // Nonaktifkan auto-dismiss: snackbar countdown 1 menit tetap tampil sampai ditutup manual
                 mainHandler.removeCallbacks(autoDismissRunnable)
-                mainHandler.postDelayed(autoDismissRunnable, AUTO_DISMISS_DURATION_MS)
             }
         }
     }
@@ -150,10 +150,18 @@ object FloatingSnackbarManager {
             tvCountdownBadge?.text = timeString
             progressBar?.progress = clampedSeconds
 
-            if (clampedSeconds <= 10) {
+            if (clampedSeconds == 0) {
+                tvCountdownBadge?.setTextColor(Color.parseColor("#EF4444"))
+                tvHeadline?.text = "Waktumu sudah habis!"
+                tvSubtitle?.text = "Waktu sesi penggunaan telah berakhir. Silakan ambil jeda sekarang."
+            } else if (clampedSeconds <= 10) {
                 tvCountdownBadge?.setTextColor(Color.parseColor("#EF4444")) // Merah lembut saat kritis
+                tvHeadline?.text = "Waktumu hampir habis!"
+                tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
             } else {
                 tvCountdownBadge?.setTextColor(Color.parseColor("#FFFFFF"))
+                tvHeadline?.text = "Waktumu hampir habis!"
+                tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
             }
         }
     }
@@ -237,6 +245,7 @@ object FloatingSnackbarManager {
         progressBar = null
         btnDismiss = null
         btnTakeBreak = null
+        btnClose = null
     }
 
     private fun ensureViewCreated(context: Context) {
@@ -318,6 +327,36 @@ object FloatingSnackbarManager {
         }
         tvCountdownBadge = countdownBadge
         headerRow.addView(countdownBadge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        // Tombol Close (X) di pojok kanan atas kartu yang jelas dan mudah diakses
+        val closeBtn = TextView(context).apply {
+            text = "✕"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#A1A1AA"))
+            gravity = Gravity.CENTER
+            val rippleColor = ColorStateList.valueOf(Color.parseColor("#444444"))
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#27272A"))
+            }
+            background = RippleDrawable(rippleColor, bg, null)
+            isClickable = true
+            isFocusable = false
+            contentDescription = "Tutup pengingat"
+            setOnClickListener {
+                Log.d(TAG, "Tombol close (X) diklik")
+                hide()
+                onDismissCallback?.invoke()
+            }
+        }
+        btnClose = closeBtn
+        val closeBtnSizePx = (24 * density).roundToInt()
+        val closeMarginStart = (10 * density).roundToInt()
+        val closeParams = LinearLayout.LayoutParams(closeBtnSizePx, closeBtnSizePx).apply {
+            marginStart = closeMarginStart
+        }
+        headerRow.addView(closeBtn, closeParams)
 
         card.addView(headerRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
@@ -481,8 +520,19 @@ object FloatingSnackbarManager {
         countdownProgressContainer?.visibility = View.VISIBLE
         progressBar?.progress = clamped
 
-        tvHeadline?.text = "Waktumu hampir habis!"
-        tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
+        if (clamped == 0) {
+            tvCountdownBadge?.setTextColor(Color.parseColor("#EF4444"))
+            tvHeadline?.text = "Waktumu sudah habis!"
+            tvSubtitle?.text = "Waktu sesi penggunaan telah berakhir. Silakan ambil jeda sekarang."
+        } else if (clamped <= 10) {
+            tvCountdownBadge?.setTextColor(Color.parseColor("#EF4444"))
+            tvHeadline?.text = "Waktumu hampir habis!"
+            tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
+        } else {
+            tvCountdownBadge?.setTextColor(Color.parseColor("#FFFFFF"))
+            tvHeadline?.text = "Waktumu hampir habis!"
+            tvSubtitle?.text = "Bersiap untuk mengambil jeda. Selesaikan aktivitasmu."
+        }
     }
 
     private fun attachAndAnimateIn(context: Context, type: SnackbarType) {

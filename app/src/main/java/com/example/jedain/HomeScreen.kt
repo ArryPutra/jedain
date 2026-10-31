@@ -135,6 +135,7 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 monitoredAppsViewModel.refreshPermissionsAndUsage()
+                DailyAwarenessWidgetProvider.updateAllWidgets(context)
                 val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
                 activityPrompt = DailyActivityPromptProvider.getNextPrompt(
                     currentHour = currentHour,
@@ -213,11 +214,13 @@ fun MainScreen(
                             preferences.saveSettings(updatedSettings)
                             targetSettings = updatedSettings
                             BreakSessionManager.resetSession(context)
+                            DailyAwarenessWidgetProvider.updateAllWidgets(context)
                         },
                         onSaveSettings = { newSettings ->
                             preferences.saveSettings(newSettings)
                             targetSettings = newSettings
                             BreakSessionManager.resetSession(context)
+                            DailyAwarenessWidgetProvider.updateAllWidgets(context)
                             currentScreen = JedaInScreen.HOME
                             scope.launch {
                                 snackbarHostState.showSnackbar("Pengaturan target disimpan")

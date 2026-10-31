@@ -532,8 +532,15 @@ class FloatingBubbleService : Service() {
                         val expired = BreakSessionManager.tick(this@FloatingBubbleService)
                         if (expired) {
                             setBubbleVisibility(false)
-                            FloatingSnackbarManager.hideImmediate()
-                            startInterventionScreen(InterventionActivity.MODE_EXPIRED)
+                            if (FloatingSnackbarManager.getCurrentType() == FloatingSnackbarManager.SnackbarType.COUNTDOWN_60SEC &&
+                                FloatingSnackbarManager.isVisible()
+                            ) {
+                                // Ketika countdown mencapai 00:00, tampilkan kondisi selesai tanpa otomatis menutup snackbar
+                                FloatingSnackbarManager.updateCountdown(0)
+                            } else {
+                                FloatingSnackbarManager.hideImmediate()
+                                startInterventionScreen(InterventionActivity.MODE_EXPIRED)
+                            }
                         } else {
                             val shouldShow = !isAppInForeground && controller.isEnabled()
                             setBubbleVisibility(shouldShow)
@@ -594,6 +601,9 @@ class FloatingBubbleService : Service() {
                         secondsLeft = secondsLeft,
                         onDismiss = {
                             BreakSessionManager.setCountdownDismissed(this, true)
+                            if (BreakSessionManager.getSessionState(this) == BreakSessionState.EXPIRED) {
+                                startInterventionScreen(InterventionActivity.MODE_EXPIRED)
+                            }
                         },
                         onTakeBreak = {
                             startInterventionScreen(InterventionActivity.MODE_EXPIRED)
@@ -916,6 +926,7 @@ class FloatingBubbleService : Service() {
             val totalMillis = repository.getTotalDeviceScreenTimeMillis()
             withContext(Dispatchers.Main) {
                 updateForegroundNotification(totalMillis)
+                DailyAwarenessWidgetProvider.updateAllWidgets(this@FloatingBubbleService)
             }
         }
     }

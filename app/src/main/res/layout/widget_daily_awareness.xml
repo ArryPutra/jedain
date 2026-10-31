@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:padding="16dp">
+
+    <!-- Normal Content View -->
+    <LinearLayout
+        android:id="@+id/widget_content_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- Header: Logo, Title, and Activity Badge -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/widget_iv_logo"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_widget_jedain_logo" />
+
+            <TextView
+                android:id="@+id/widget_tv_header_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/widget_header_title"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="13sp" />
+
+            <FrameLayout
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@drawable/widget_badge_background">
+
+                <ImageView
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_widget_phone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- Main Screen Time & Target Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <!-- Prominent Total Screen Time -->
+                <TextView
+                    android:id="@+id/widget_tv_total_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:text="@string/widget_default_time"
+                    android:textColor="@color/widget_text_primary"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
+
+                <!-- Target Progress & Exceeded Info Container -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:gravity="end|bottom"
+                    android:orientation="vertical">
+
+                    <!-- Small Label when Target Exceeded -->
+                    <TextView
+                        android:id="@+id/widget_tv_exceeded_badge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:text="@string/widget_target_exceeded_label"
+                        android:textColor="@color/widget_status_exceeded"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <!-- Target Progress Ratio (e.g. 4j 12m / 5j or +2j 34m / 3j) -->
+                    <TextView
+                        android:id="@+id/widget_tv_target"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:includeFontPadding="false"
+                        android:maxLines="1"
+                        android:text="@string/widget_default_target"
+                        android:textColor="@color/widget_text_secondary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Target Progress Bars (Dynamic Colors for Normal, Warning, Exceeded) -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp">
+
+                <!-- Normal Tier: Green Progress Bar (< 90%) -->
+                <ProgressBar
+                    android:id="@+id/widget_progress_bar_normal"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressDrawable="@drawable/widget_progress_drawable_green" />
+
+                <!-- Warning Tier: Yellow/Amber Progress Bar (90% - 100%) -->
+                <ProgressBar
+                    android:id="@+id/widget_progress_bar_warning"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressDrawable="@drawable/widget_progress_drawable_yellow"
+                    android:visibility="gone" />
+
+                <!-- Exceeded Tier: Red Progress Bar (> 100%, visually clamped to 100%) -->
+                <ProgressBar
+                    android:id="@+id/widget_progress_bar_exceeded"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="100"
+                    android:progressDrawable="@drawable/widget_progress_drawable_red"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- Spacer weight to push Top App to bottom nicely in varying grid heights -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            tools:ignore="UselessLeaf" />
+
+        <!-- Top App Row (Icon + Name + Duration) -->
+        <LinearLayout
+            android:id="@+id/widget_layout_top_app"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/widget_pill_background"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="5dp">
+
+            <ImageView
+                android:id="@+id/widget_iv_top_app_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:contentDescription="@null"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:id="@+id/widget_tv_top_app_info"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/widget_no_activity"
+                android:textColor="@color/widget_text_primary"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Permission Needed View (Overlay state when Usage Access is not granted) -->
+    <LinearLayout
+        android:id="@+id/widget_permission_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_widget_warning" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="@string/widget_permission_title"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center"
+            android:text="@string/widget_permission_desc"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="11sp" />
+    </LinearLayout>
+</FrameLayout>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget Dark Mode Palette (Consistent with JedaIn Design System) -->
+    <color name="widget_background">#FF1C1C1C</color>
+    <color name="widget_border">#FF2B2B2B</color>
+    <color name="widget_text_primary">#FFF4F4F4</color>
+    <color name="widget_text_secondary">#FF8E8E8E</color>
+    <color name="widget_card_subtle">#FF262626</color>
+    <color name="widget_progress_track">#FF2B2B2B</color>
+    <color name="widget_progress_fill">#FFF4F4F4</color>
+    <color name="widget_icon_badge">#FF262626</color>
+    <color name="widget_icon_tint">#FFE0E0E0</color>
+    <color name="widget_warning_bg">#FF242422</color>
+
+    <!-- Semantic Status Colors for Widget Dynamic Tiers (Dark Mode) -->
+    <color name="widget_status_normal">#FF4ADE80</color>
+    <color name="widget_status_warning">#FFFACC15</color>
+    <color name="widget_status_exceeded">#FFF87171</color>
+    <color name="widget_progress_green">#FF4ADE80</color>
+    <color name="widget_progress_yellow">#FFFACC15</color>
+    <color name="widget_progress_red">#FFF87171</color>
+</resources>

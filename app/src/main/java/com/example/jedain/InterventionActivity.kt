@@ -39,6 +39,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.SelfImprovement
@@ -433,6 +434,14 @@ private fun RestingCountdownView(
         mutableLongStateOf(BreakSessionManager.getRemainingRestMillis(context))
     }
 
+    var activityPrompt by remember {
+        mutableStateOf(
+            DailyActivityPromptProvider.getNextPrompt(
+                currentHour = DailyActivityPromptProvider.getCurrentLocalHour(),
+            ),
+        )
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             val remaining = BreakSessionManager.getRemainingRestMillis(context)
@@ -483,18 +492,101 @@ private fun RestingCountdownView(
             textAlign = TextAlign.Center,
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            text = "Letakkan ponsel, alihkan pandangan dari layar, atau minum segelas air. Pikiran yang jernih dimulai dari jeda sadar.",
-            fontSize = 14.sp,
-            color = palette.textSecondary,
-            textAlign = TextAlign.Center,
-            lineHeight = 21.sp,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        // Rekomendasi Ide Kegiatan dari DailyActivityPromptProvider (Fitur Beranda)
+        AnimatedContent(
+            targetState = activityPrompt,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(150))
+            },
+            label = "RestingActivityPromptAnimation",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+        ) { targetPrompt ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Badge Kategori
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = palette.surface,
+                    border = BorderStroke(1.dp, palette.border),
+                    shadowElevation = 0.dp,
+                ) {
+                    Text(
+                        text = targetPrompt.category.label,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.textSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
 
-        Spacer(modifier = Modifier.height(36.dp))
+                // Nama Kegiatan (Headline)
+                Text(
+                    text = targetPrompt.headline,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 24.sp,
+                    letterSpacing = (-0.3).sp,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+
+                // Deskripsi Singkat Kegiatan (Subtitle)
+                Text(
+                    text = targetPrompt.subtitle,
+                    fontSize = 13.sp,
+                    color = palette.textSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Tombol Kontrol "Ganti Ide"
+        Surface(
+            onClick = {
+                val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
+                activityPrompt = DailyActivityPromptProvider.getNextPrompt(
+                    currentHour = currentHour,
+                    excludeId = activityPrompt.id,
+                )
+            },
+            shape = CircleShape,
+            color = palette.surface,
+            border = BorderStroke(1.dp, palette.border),
+            shadowElevation = 0.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Ganti Ide",
+                    tint = palette.textSecondary,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = "Ganti Ide",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.textSecondary,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
 
         // Large Digital Countdown Card
         Box(
