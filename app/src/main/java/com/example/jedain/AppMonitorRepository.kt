@@ -80,6 +80,10 @@ class AppMonitorRepository(private val context: Context) {
         )
     }
 
+    suspend fun getTotalDeviceScreenTimeMillis(nowMillis: Long = System.currentTimeMillis()): Long = withContext(Dispatchers.IO) {
+        ScreenTimeCalculator.calculateTotalDeviceScreenTimeMillis(context, nowMillis)
+    }
+
     suspend fun getInstalledApps(): List<MonitoredAppModel> = withContext(Dispatchers.IO) {
         val packageManager = context.packageManager
         val monitoredPackages = getMonitoredPackageSet()

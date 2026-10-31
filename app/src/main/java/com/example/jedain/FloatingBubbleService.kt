@@ -48,6 +48,7 @@ import com.example.jedain.ui.theme.TextPrimaryDark
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -153,6 +154,8 @@ class FloatingBubbleService : Service() {
         Log.d(TAG, "Initial screen state: isInteractive=$isInteractive")
         if (isInteractive) {
             startUpdateLoop()
+        } else {
+            refreshNotificationScreenTime()
         }
     }
 
@@ -555,6 +558,11 @@ class FloatingBubbleService : Service() {
                     FloatingSnackbarManager.hideImmediate()
                 }
 
+                // Pembaruan notifikasi silent setiap 1 menit (60 detik) atau saat tick pertama (tick 0)
+                if (tickCount % 60 == 0) {
+                    refreshNotificationScreenTime()
+                }
+
                 tickCount++
                 delay(1.seconds)
             }
@@ -837,27 +845,31 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    private var lastNotifiedScreenTimeText: String? = null
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Bubble Waktu Layar JedaIn",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Menampilkan gelembung waktu layar aplikasi JedaIn"
+            description = "Menampilkan status pemantauan waktu layar aplikasi JedaIn"
             setShowBadge(false)
+            setSound(null, null)
+            enableVibration(false)
         }
         val manager = getSystemService(NotificationManager::class.java)
         manager?.createNotificationChannel(channel)
     }
 
-    private fun buildForegroundNotification(): Notification {
+    private fun buildForegroundNotification(dailyScreenTimeMillis: Long = 0L): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             },
-            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
         val hideIntent = Intent(this, FloatingBubbleService::class.java).apply {
@@ -867,18 +879,45 @@ class FloatingBubbleService : Service() {
             this,
             1,
             hideIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+        val formattedDuration = formatDailyScreenTimeNotification(dailyScreenTimeMillis)
+        val contentText = "⏱ Total waktu layar hari ini: $formattedDuration"
+        val bigText = "⏱ Total waktu layar hari ini\n$formattedDuration"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_jedain)
-            .setContentTitle("JedaIn Waktu Layar")
-            .setContentText("Memantau waktu layar aplikasi aktif")
+            .setContentTitle("JedaIn")
+            .setContentText(contentText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setContentIntent(pendingIntent)
             .addAction(0, "Sembunyikan", hidePendingIntent)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun updateForegroundNotification(dailyScreenTimeMillis: Long) {
+        val formattedDuration = formatDailyScreenTimeNotification(dailyScreenTimeMillis)
+        if (formattedDuration == lastNotifiedScreenTimeText) {
+            return
+        }
+        lastNotifiedScreenTimeText = formattedDuration
+        val notification = buildForegroundNotification(dailyScreenTimeMillis)
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager?.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun refreshNotificationScreenTime() {
+        serviceScope.launch(Dispatchers.IO) {
+            val totalMillis = repository.getTotalDeviceScreenTimeMillis()
+            withContext(Dispatchers.Main) {
+                updateForegroundNotification(totalMillis)
+            }
+        }
     }
 
     companion object {

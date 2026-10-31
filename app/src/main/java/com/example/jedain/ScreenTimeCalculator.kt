@@ -116,6 +116,29 @@ fun formatScreenTimeShort(millis: Long): String {
     }
 }
 
+/**
+ * Format total waktu penggunaan layar hari ini untuk persistent silent notification JedaIn.
+ * Aturan format:
+ * - Kurang dari 1 jam: "42 menit"
+ * - 1 jam atau lebih: "3 jam 42 menit"
+ * - Jika tepat satu jam: "1 jam"
+ * - Jika belum ada penggunaan: "0 menit"
+ */
+fun formatDailyScreenTimeNotification(millis: Long): String {
+    if (millis <= 0L) return "0 menit"
+    val totalMinutes = millis / 60_000L
+    if (totalMinutes <= 0L) return "0 menit"
+
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+
+    return when {
+        hours == 0L -> "$minutes menit"
+        minutes == 0L -> "$hours jam"
+        else -> "$hours jam $minutes menit"
+    }
+}
+
 fun formatScreenTimeComparison(
     hasUsagePermission: Boolean,
     todayMillis: Long,
@@ -291,6 +314,44 @@ object ScreenTimeCalculator {
             todayUsageMap = todayUsageMap,
             yesterdayUsageMap = yesterdayUsageMap,
         )
+    }
+
+    /**
+     * Menghitung total durasi screen time seluruh aplikasi di perangkat hari ini (sejak 00:00 waktu lokal).
+     * Mengecualikan aplikasi JedaIn sendiri.
+     * Menggunakan rekonsiliasi UsageEvents kronologis untuk menghindari overlapping interval dan kesalahan agregasi.
+     */
+    fun calculateTotalDeviceScreenTimeMillis(
+        context: Context,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Long {
+        val hasUsagePermission = PermissionHelper.hasUsageStatsPermission(context)
+        if (!hasUsagePermission) {
+            return 0L
+        }
+
+        val zoneId = ZoneId.systemDefault()
+        val todayDate = LocalDate.now(zoneId)
+        val todayStartMillis = todayDate
+            .atStartOfDay(zoneId)
+            .toInstant()
+            .toEpochMilli()
+
+        if (nowMillis <= todayStartMillis) {
+            return 0L
+        }
+
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return 0L
+
+        val todayUsageMap = queryPackageUsageMillis(
+            usageStatsManager = usageStatsManager,
+            startTime = todayStartMillis,
+            endTime = nowMillis,
+            ownPackageName = context.packageName,
+        )
+
+        return todayUsageMap.values.sum()
     }
 
     private fun queryPackageUsageMillis(
