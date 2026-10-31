@@ -168,6 +168,8 @@ class MonitoredAppsViewModel(
                 monitoredPackages = updatedMonitoredSet,
                 todayUsageMap = cachedTodayUsageMap,
                 yesterdayUsageMap = cachedYesterdayUsageMap,
+                todayDeviceTotalMillis = cachedTodayUsageMap.values.sum(),
+                yesterdayDeviceTotalMillis = cachedYesterdayUsageMap.values.sum(),
             )
 
             current.copy(

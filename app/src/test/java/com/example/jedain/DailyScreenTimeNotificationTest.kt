@@ -158,4 +158,47 @@ class DailyScreenTimeNotificationTest {
         assertFalse(bigText.contains("Pemantauan aktif"))
         assertFalse(bigText.contains("JedaIn membantu kamu lebih sadar"))
     }
+
+    @Test
+    fun testBuildScreenTimeSummaryFromMaps_separatesDeviceTotalAndMonitoredApps() {
+        val todayUsage = mapOf(
+            "com.zhiliaoapp.musically" to 129L * 60_000L, // 2 jam 9 menit (TikTok)
+            "com.instagram.android" to 45L * 60_000L,     // 45 menit (Instagram)
+            "com.whatsapp" to 30L * 60_000L,              // 30 menit (WhatsApp - tidak dipantau)
+        )
+        val yesterdayUsage = mapOf(
+            "com.zhiliaoapp.musically" to 100L * 60_000L,
+            "com.instagram.android" to 50L * 60_000L,
+            "com.whatsapp" to 30L * 60_000L,
+        )
+        val monitored = setOf("com.zhiliaoapp.musically", "com.instagram.android")
+
+        val summary = buildScreenTimeSummaryFromMaps(
+            hasUsagePermission = true,
+            hasOverlayPermission = true,
+            monitoredPackages = monitored,
+            todayUsageMap = todayUsage,
+            yesterdayUsageMap = yesterdayUsage,
+            todayDeviceTotalMillis = todayUsage.values.sum(),
+            yesterdayDeviceTotalMillis = yesterdayUsage.values.sum(),
+        )
+
+        // Verifikasi durasi TikTok tepat 2 jam 9 menit
+        assertEquals(129L * 60_000L, summary.appUsageMillisMap["com.zhiliaoapp.musically"])
+        assertEquals("2j 9m", formatScreenTimeShort(summary.appUsageMillisMap["com.zhiliaoapp.musically"] ?: 0L))
+
+        // Verifikasi durasi Instagram 45 menit
+        assertEquals(45L * 60_000L, summary.appUsageMillisMap["com.instagram.android"])
+
+        // Verifikasi total aplikasi yang dipantau (TikTok + Instagram): 129m + 45m = 174m = 2j 54m
+        assertEquals((129L + 45L) * 60_000L, summary.todayTotalMillis)
+        assertEquals("2j 54m", summary.monitoredTotalDurationText)
+
+        // Verifikasi total penggunaan seluruh perangkat (termasuk WhatsApp): 129m + 45m + 30m = 204m = 3j 24m
+        assertEquals((129L + 45L + 30L) * 60_000L, summary.todayDeviceTotalMillis)
+        assertEquals("3j 24m", summary.todayTotalDurationText)
+
+        // Verifikasi kartu HomeScreen menampilkan total perangkat
+        assertEquals("3j 24m", summary.todayTotalDurationText)
+    }
 }
