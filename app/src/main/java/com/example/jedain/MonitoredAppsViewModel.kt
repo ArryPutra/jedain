@@ -26,6 +26,7 @@ data class MonitoredAppsUiState(
     val hasUsageAccessPermission: Boolean = false,
     val hasOverlayPermission: Boolean = false,
     val todayTotalDurationText: String = "0m",
+    val todayTotalMillis: Long = 0L,
     val comparisonChangeText: String = "Memuat perbandingan waktu layar...",
     val isTrendingDown: Boolean = true,
 )
@@ -96,6 +97,7 @@ class MonitoredAppsViewModel(
                     hasUsageAccessPermission = summary.hasUsagePermission,
                     hasOverlayPermission = summary.hasOverlayPermission,
                     todayTotalDurationText = summary.todayTotalDurationText,
+                    todayTotalMillis = summary.todayTotalMillis,
                     comparisonChangeText = summary.comparisonChangeText,
                     isTrendingDown = summary.isTrendingDown,
                 )
@@ -133,6 +135,7 @@ class MonitoredAppsViewModel(
                     hasUsageAccessPermission = summary.hasUsagePermission,
                     hasOverlayPermission = summary.hasOverlayPermission,
                     todayTotalDurationText = summary.todayTotalDurationText,
+                    todayTotalMillis = summary.todayTotalMillis,
                     comparisonChangeText = summary.comparisonChangeText,
                     isTrendingDown = summary.isTrendingDown,
                 )
@@ -177,6 +180,7 @@ class MonitoredAppsViewModel(
                 filteredApps = updatedFilteredApps,
                 monitoredCount = updatedAllApps.count { it.isMonitored },
                 todayTotalDurationText = localSummary.todayTotalDurationText,
+                todayTotalMillis = localSummary.todayTotalMillis,
                 comparisonChangeText = localSummary.comparisonChangeText,
                 isTrendingDown = localSummary.isTrendingDown,
             )

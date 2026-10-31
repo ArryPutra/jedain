@@ -94,6 +94,7 @@ import com.example.jedain.ui.theme.JedaInTheme
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 enum class JedaInScreen {
@@ -134,6 +135,7 @@ fun MainScreen(
     DisposableEffect(lifecycleOwner, monitoredAppsViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                targetSettings = preferences.loadSettings()
                 monitoredAppsViewModel.refreshPermissionsAndUsage()
                 DailyAwarenessWidgetProvider.updateAllWidgets(context)
                 val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
@@ -182,6 +184,7 @@ fun MainScreen(
                         onToggleDarkTheme = {
                             isDarkThemeUserOverride = !isDarkTheme
                         },
+                        targetMinutes = targetSettings.validatedDailyTargetMinutes,
                         activityPrompt = activityPrompt,
                         onNextPromptClick = {
                             val currentHour = DailyActivityPromptProvider.getCurrentLocalHour()
@@ -252,6 +255,7 @@ fun HomeScreen(
     isDarkTheme: Boolean,
     onToggleDarkTheme: () -> Unit,
     modifier: Modifier = Modifier,
+    targetMinutes: Int = 0,
     activityPrompt: ActivityPrompt = remember {
         DailyActivityPromptProvider.getNextPrompt(DailyActivityPromptProvider.getCurrentLocalHour())
     },
@@ -415,6 +419,8 @@ fun HomeScreen(
                     changeText = monitoredAppsUiState.comparisonChangeText,
                     comparisonNote = "Dibandingkan pada waktu yang sama",
                     isTrendingDown = monitoredAppsUiState.isTrendingDown,
+                    targetMinutes = targetMinutes,
+                    totalUsageMillis = monitoredAppsUiState.todayTotalMillis,
                     onTargetSettingsClick = onTargetSettingsClick,
                 )
 
@@ -1060,6 +1066,28 @@ private fun PermissionProminentDisclosureDialog(
     )
 }
 
+enum class TargetExceededTier {
+    NONE,
+    WARNING_ORANGE,
+    EXCEEDED_RED,
+}
+
+fun resolveTargetExceededTier(
+    totalMinutes: Int,
+    targetMinutes: Int,
+): TargetExceededTier {
+    if (targetMinutes <= 0 || totalMinutes <= targetMinutes) {
+        return TargetExceededTier.NONE
+    }
+    // Ambang batas +50% dari target
+    val threshold50Percent = (targetMinutes * 1.5).roundToInt()
+    return if (totalMinutes <= threshold50Percent) {
+        TargetExceededTier.WARNING_ORANGE
+    } else {
+        TargetExceededTier.EXCEEDED_RED
+    }
+}
+
 // --- Section 2: Kartu Waktu Layar Hari Ini ---
 
 @Composable
@@ -1069,15 +1097,41 @@ fun TodayScreenTimeCard(
     comparisonNote: String,
     modifier: Modifier = Modifier,
     isTrendingDown: Boolean = true,
+    targetMinutes: Int = 0,
+    totalUsageMillis: Long = 0L,
     onTargetSettingsClick: () -> Unit = {},
 ) {
     val colors = JedaInTheme.colors
+
+    val totalMinutes = (totalUsageMillis / 60_000L).toInt()
+    val exceededTier = resolveTargetExceededTier(
+        totalMinutes = totalMinutes,
+        targetMinutes = targetMinutes,
+    )
+
+    val indicatorColor = when (exceededTier) {
+        TargetExceededTier.WARNING_ORANGE -> colors.durationOrange
+        TargetExceededTier.EXCEEDED_RED -> colors.durationRed
+        TargetExceededTier.NONE -> Color.Unspecified
+    }
+
+    val cardBorderColor = if (exceededTier != TargetExceededTier.NONE) {
+        indicatorColor
+    } else {
+        colors.border
+    }
+
+    val durationDigitsColor = if (exceededTier != TargetExceededTier.NONE) {
+        indicatorColor
+    } else {
+        colors.textPrimary
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
         color = colors.surface,
-        border = BorderStroke(1.dp, colors.border),
+        border = BorderStroke(1.dp, cardBorderColor),
         shadowElevation = 0.dp,
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -1144,9 +1198,35 @@ fun TodayScreenTimeCard(
                     text = durationText,
                     fontSize = 42.sp,
                     fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary,
+                    color = durationDigitsColor,
                     letterSpacing = (-1.2).sp,
                 )
+
+                if (exceededTier != TargetExceededTier.NONE) {
+                    val targetFormatted = formatDailyTargetDuration(targetMinutes)
+                    val diffMinutes = (totalMinutes - targetMinutes).coerceAtLeast(1)
+                    val diffFormatted = formatScreenTimeShort(diffMinutes * 60_000L)
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(indicatorColor),
+                        )
+                        Text(
+                            text = "Melewati target $targetFormatted · +$diffFormatted",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = indicatorColor,
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 

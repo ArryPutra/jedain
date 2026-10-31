@@ -614,4 +614,52 @@ class ExampleUnitTest {
         assertTrue(customState.isCustomSessionDuration)
         assertEquals(7, customState.customSessionDurationMinutes)
     }
+
+    @Test
+    fun breakSessionDuration_constantsAndDefaultValues() {
+        assertEquals(5, BreakSessionManager.DEFAULT_REST_DURATION_MINUTES)
+        assertEquals("last_rest_duration_minutes", BreakSessionManager.KEY_LAST_REST_DURATION_MINUTES)
+        assertEquals("last_rest_is_custom", BreakSessionManager.KEY_LAST_REST_IS_CUSTOM)
+        assertEquals("total_rest_millis", BreakSessionManager.KEY_TOTAL_REST_MILLIS)
+        assertEquals(5L * 60L * 1000L, BreakSessionManager.REST_DURATION_MILLIS)
+
+        // Preset options matching requirements: 1, 3, 5, 10
+        val presets = listOf(1, 3, 5, 10)
+        assertEquals(4, presets.size)
+        assertTrue(presets.contains(1))
+        assertTrue(presets.contains(3))
+        assertTrue(presets.contains(5))
+        assertTrue(presets.contains(10))
+        assertEquals(5, BreakSessionManager.DEFAULT_REST_DURATION_MINUTES)
+    }
+
+    @Test
+    fun testTargetExceededTier_thresholdsAndCustomTargets() {
+        val target3Hours = 180 // 3 jam
+
+        // 1. Total <= target: kartu normal, tanpa indikator
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 160, targetMinutes = target3Hours)) // 2j 40m
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 180, targetMinutes = target3Hours)) // tepat 3 jam
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 0, targetMinutes = target3Hours))
+
+        // 2. Total > target sampai +50% dari target (181 s/d 270 menit): warna oranye
+        assertEquals(TargetExceededTier.WARNING_ORANGE, resolveTargetExceededTier(totalMinutes = 181, targetMinutes = target3Hours))
+        assertEquals(TargetExceededTier.WARNING_ORANGE, resolveTargetExceededTier(totalMinutes = 226, targetMinutes = target3Hours)) // 3j 46m
+        assertEquals(TargetExceededTier.WARNING_ORANGE, resolveTargetExceededTier(totalMinutes = 270, targetMinutes = target3Hours)) // 4j 30m (+50%)
+
+        // 3. Total > target +50% (271+ menit): merah lembut
+        assertEquals(TargetExceededTier.EXCEEDED_RED, resolveTargetExceededTier(totalMinutes = 271, targetMinutes = target3Hours)) // 4j 31m
+        assertEquals(TargetExceededTier.EXCEEDED_RED, resolveTargetExceededTier(totalMinutes = 300, targetMinutes = target3Hours)) // 5j
+
+        // 4. Target Kustom (contoh: 90 menit = 1 jam 30 menit, ambang +50% = 135 menit)
+        val customTarget = 90
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 90, targetMinutes = customTarget))
+        assertEquals(TargetExceededTier.WARNING_ORANGE, resolveTargetExceededTier(totalMinutes = 95, targetMinutes = customTarget))
+        assertEquals(TargetExceededTier.WARNING_ORANGE, resolveTargetExceededTier(totalMinutes = 135, targetMinutes = customTarget))
+        assertEquals(TargetExceededTier.EXCEEDED_RED, resolveTargetExceededTier(totalMinutes = 136, targetMinutes = customTarget))
+
+        // 5. Target tidak diset (0 atau negatif): tidak ada indikator
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 100, targetMinutes = 0))
+        assertEquals(TargetExceededTier.NONE, resolveTargetExceededTier(totalMinutes = 100, targetMinutes = -1))
+    }
 }

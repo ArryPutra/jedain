@@ -196,9 +196,99 @@ class DailyScreenTimeNotificationTest {
 
         // Verifikasi total penggunaan seluruh perangkat (termasuk WhatsApp): 129m + 45m + 30m = 204m = 3j 24m
         assertEquals((129L + 45L + 30L) * 60_000L, summary.todayDeviceTotalMillis)
-        assertEquals("3j 24m", summary.todayTotalDurationText)
 
-        // Verifikasi kartu HomeScreen menampilkan total perangkat
-        assertEquals("3j 24m", summary.todayTotalDurationText)
+        // Sesuai keputusan produk (Master Document 7.2 & 6.4):
+        // Kartu HomeScreen hanya menampilkan total aplikasi yang dipantau (2j 54m), bukan seluruh perangkat (3j 24m)
+        assertEquals("2j 54m", summary.todayTotalDurationText)
+        assertEquals("2j 54m", summary.monitoredTotalDurationText)
+
+        // Verifikasi perbandingan kemarin berbasis aplikasi yang dipantau:
+        // Hari ini: 129m + 45m = 174m
+        // Kemarin: 100m + 50m = 150m
+        // Selisih: 24m lebih banyak dari kemarin
+        assertEquals("24m lebih banyak dari kemarin", summary.comparisonChangeText)
+        assertFalse(summary.isTrendingDown)
+    }
+
+    @Test
+    fun testHomeScreenCard_sumsOnlyMonitoredApps_matchingUserContextScenario() {
+        // Skenario nyata dari layar pengguna:
+        // TikTok: 2j 36m (156 menit)
+        // Instagram: 35m (35 menit)
+        // Aplikasi tidak dipantau (misalnya Chrome/Browser): 2j 7m (127 menit)
+        // Total perangkat: 5j 18m (318 menit)
+        val tiktokMillis = 156L * 60_000L
+        val instagramMillis = 35L * 60_000L
+        val unmonitoredMillis = 127L * 60_000L
+
+        val todayUsage = mapOf(
+            "com.zhiliaoapp.musically" to tiktokMillis,
+            "com.instagram.android" to instagramMillis,
+            "com.android.chrome" to unmonitoredMillis,
+        )
+
+        // Kemarin pada waktu yang sama:
+        // TikTok: 2j 0m (120 menit)
+        // Instagram: 30m (30 menit)
+        // Unmonitored: 3j 0m (180 menit)
+        val yesterdayUsage = mapOf(
+            "com.zhiliaoapp.musically" to 120L * 60_000L,
+            "com.instagram.android" to 30L * 60_000L,
+            "com.android.chrome" to 180L * 60_000L,
+        )
+
+        val monitoredSet = setOf("com.zhiliaoapp.musically", "com.instagram.android")
+
+        val summary = buildScreenTimeSummaryFromMaps(
+            hasUsagePermission = true,
+            hasOverlayPermission = true,
+            monitoredPackages = monitoredSet,
+            todayUsageMap = todayUsage,
+            yesterdayUsageMap = yesterdayUsage,
+            todayDeviceTotalMillis = todayUsage.values.sum(),
+            yesterdayDeviceTotalMillis = yesterdayUsage.values.sum(),
+        )
+
+        // 1. Total seluruh perangkat = 5j 18m (318 menit)
+        assertEquals(318L * 60_000L, summary.todayDeviceTotalMillis)
+        assertEquals("5j 18m", formatScreenTimeShort(summary.todayDeviceTotalMillis))
+
+        // 2. Kartu "Waktu layar hari ini" HANYA menjumlahkan aplikasi yang dipantau (TikTok + Instagram):
+        // 156m + 35m = 191m = 3j 11m (BUKAN 5j 18m!)
+        assertEquals(191L * 60_000L, summary.todayTotalMillis)
+        assertEquals("3j 11m", summary.todayTotalDurationText)
+        assertEquals("3j 11m", summary.monitoredTotalDurationText)
+
+        // 3. Aplikasi tidak dipantau (Chrome 2j 7m) tidak boleh masuk ke total kartu
+        assertFalse(summary.todayTotalMillis >= summary.todayDeviceTotalMillis)
+        assertEquals(summary.todayDeviceTotalMillis - unmonitoredMillis, summary.todayTotalMillis)
+
+        // 4. Perbandingan kemarin memakai basis aplikasi terpantau:
+        // Hari ini terpantau: 191m
+        // Kemarin terpantau: 120m + 30m = 150m
+        // Selisih: 41m lebih banyak dari kemarin
+        assertEquals("41m lebih banyak dari kemarin", summary.comparisonChangeText)
+        assertFalse(summary.isTrendingDown)
+
+        // 5. Simulasi perubahan daftar aplikasi lewat "Kelola aplikasi":
+        // Jika Instagram di-unmonitor (hanya TikTok):
+        val summaryOnlyTiktok = buildScreenTimeSummaryFromMaps(
+            hasUsagePermission = true,
+            hasOverlayPermission = true,
+            monitoredPackages = setOf("com.zhiliaoapp.musically"),
+            todayUsageMap = todayUsage,
+            yesterdayUsageMap = yesterdayUsage,
+        )
+        assertEquals("2j 36m", summaryOnlyTiktok.todayTotalDurationText)
+
+        // Jika Chrome ditambahkan ke daftar dipantau:
+        val summaryWithChrome = buildScreenTimeSummaryFromMaps(
+            hasUsagePermission = true,
+            hasOverlayPermission = true,
+            monitoredPackages = setOf("com.zhiliaoapp.musically", "com.instagram.android", "com.android.chrome"),
+            todayUsageMap = todayUsage,
+            yesterdayUsageMap = yesterdayUsage,
+        )
+        assertEquals("5j 18m", summaryWithChrome.todayTotalDurationText)
     }
 }

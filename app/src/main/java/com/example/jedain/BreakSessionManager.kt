@@ -28,6 +28,11 @@ object BreakSessionManager {
 
     const val MAX_CONSECUTIVE_EXTENSIONS = 2
     const val REST_DURATION_MILLIS = 5L * 60L * 1000L
+    const val DEFAULT_REST_DURATION_MINUTES = 5
+
+    const val KEY_LAST_REST_DURATION_MINUTES = "last_rest_duration_minutes"
+    const val KEY_LAST_REST_IS_CUSTOM = "last_rest_is_custom"
+    const val KEY_TOTAL_REST_MILLIS = "total_rest_millis"
 
     const val THREE_MINUTES_MILLIS = 3L * 60L * 1000L
     const val SIXTY_SECONDS_MILLIS = 60L * 1000L
@@ -333,16 +338,49 @@ object BreakSessionManager {
         return false
     }
 
-    fun startRest(context: Context) {
-        val restEndTime = System.currentTimeMillis() + REST_DURATION_MILLIS
+    fun getLastRestDurationMinutes(context: Context): Int {
+        return getPrefs(context).getInt(KEY_LAST_REST_DURATION_MINUTES, DEFAULT_REST_DURATION_MINUTES).coerceAtLeast(1)
+    }
+
+    fun isLastRestCustom(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_LAST_REST_IS_CUSTOM, false)
+    }
+
+    fun setLastRestDuration(context: Context, minutes: Int, isCustom: Boolean = false) {
+        getPrefs(context).edit {
+            putInt(KEY_LAST_REST_DURATION_MINUTES, minutes.coerceAtLeast(1))
+            putBoolean(KEY_LAST_REST_IS_CUSTOM, isCustom)
+        }
+    }
+
+    fun getTotalRestMillis(context: Context): Long {
+        val prefs = getPrefs(context)
+        val saved = prefs.getLong(KEY_TOTAL_REST_MILLIS, -1L)
+        if (saved > 0L) {
+            return saved
+        }
+        return REST_DURATION_MILLIS
+    }
+
+    @JvmOverloads
+    fun startRest(
+        context: Context,
+        durationMinutes: Int = getLastRestDurationMinutes(context),
+        isCustom: Boolean = false,
+    ) {
+        val validMinutes = durationMinutes.coerceAtLeast(1)
+        val restDurationMillis = validMinutes * 60L * 1000L
+        val restEndTime = System.currentTimeMillis() + restDurationMillis
         lastMonotonicTime = 0L
         resetReminderFlags(context)
         SessionReminderNotificationHelper.cancelAllReminders(context)
+        setLastRestDuration(context, validMinutes, isCustom)
         getPrefs(context).edit {
             putString(KEY_STATE, BreakSessionState.RESTING.name)
             putLong(KEY_REST_END_TIME, restEndTime)
+            putLong(KEY_TOTAL_REST_MILLIS, restDurationMillis)
         }
-        Log.d(TAG, "Started 5-minute rest period. Ends at $restEndTime")
+        Log.d(TAG, "Started $validMinutes-minute rest period. Ends at $restEndTime")
     }
 
     fun onRestCompleted(context: Context) {
@@ -358,6 +396,7 @@ object BreakSessionManager {
             putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
             putString(KEY_STATE, BreakSessionState.PAUSED.name)
             remove(KEY_REST_END_TIME)
+            remove(KEY_TOTAL_REST_MILLIS)
         }
         Log.d(TAG, "Rest completed! Reset consecutive extensions and initialized new session of $configuredMinutes min")
     }

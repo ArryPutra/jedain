@@ -1146,14 +1146,14 @@ private fun SessionBreakSettingCard(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Sesi jeda waktu",
+                        text = "Durasi penggunaan aplikasi",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.textPrimary,
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Tentukan kapan JedaIn mengingatkanmu untuk berhenti sejenak saat menggunakan aplikasi yang dipantau.",
+                        text = "Atur berapa lama aplikasi yang dipantau dapat digunakan sebelum hitung mundur berakhir.",
                         fontSize = 13.sp,
                         color = colors.textSecondary,
                         lineHeight = 18.sp,
@@ -1189,7 +1189,7 @@ private fun SessionBreakSettingCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Durasi per sesi penggunaan",
+                        text = "Durasi sebelum pengingat",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = colors.accent,
@@ -1287,7 +1287,7 @@ private fun SessionBreakSettingCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Tampilkan layar jeda saat batas waktu tercapai.",
+                        text = "Tampilkan layar jeda saat hitung mundur selesai.",
                         fontSize = 12.sp,
                         color = colors.textSecondary,
                         lineHeight = 17.sp,

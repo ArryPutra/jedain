@@ -339,7 +339,7 @@ internal fun buildScreenTimeSummaryFromMaps(
             yesterdayUsageMillisMap = yesterdayUsageMap,
             todayTotalMillis = 0L,
             todayDeviceTotalMillis = todayDeviceTotalMillis,
-            yesterdaySameTimeMillis = yesterdayDeviceTotalMillis,
+            yesterdaySameTimeMillis = 0L,
             todayTotalDurationText = "0m",
             monitoredTotalDurationText = "0m",
             comparisonChangeText = "Pilih aplikasi yang ingin dipantau",
@@ -348,14 +348,19 @@ internal fun buildScreenTimeSummaryFromMaps(
     }
 
     val monitoredTodayTotalMillis = monitoredPackages.sumOf { pkg -> todayUsageMap[pkg] ?: 0L }
+    val monitoredYesterdayTotalMillis = monitoredPackages.sumOf { pkg -> yesterdayUsageMap[pkg] ?: 0L }
 
-    // Kartu utama di HomeScreen menampilkan total penggunaan seluruh perangkat hari ini
-    // Bandingkan dengan total perangkat kemarin untuk perbandingan yang konsisten
+    // Sesuai keputusan produk (Master Document 7.2 & 6.4):
+    // Total waktu layar pada kartu utama HANYA menjumlahkan aplikasi yang dipilih pengguna untuk dipantau.
+    // Aplikasi yang tidak dipantau tidak boleh ikut dijumlahkan.
+    // Perbandingan "dari kemarin" menggunakan basis yang sama (hanya aplikasi terpantau).
     val (changeText, isTrendingDown) = formatScreenTimeComparison(
         hasUsagePermission = true,
-        todayMillis = todayDeviceTotalMillis,
-        yesterdayMillis = yesterdayDeviceTotalMillis,
+        todayMillis = monitoredTodayTotalMillis,
+        yesterdayMillis = monitoredYesterdayTotalMillis,
     )
+
+    val monitoredDurationText = formatScreenTimeShort(monitoredTodayTotalMillis)
 
     return ScreenTimeSummary(
         hasUsagePermission = true,
@@ -364,9 +369,9 @@ internal fun buildScreenTimeSummaryFromMaps(
         yesterdayUsageMillisMap = yesterdayUsageMap,
         todayTotalMillis = monitoredTodayTotalMillis,
         todayDeviceTotalMillis = todayDeviceTotalMillis,
-        yesterdaySameTimeMillis = yesterdayDeviceTotalMillis,
-        todayTotalDurationText = formatScreenTimeShort(todayDeviceTotalMillis),
-        monitoredTotalDurationText = formatScreenTimeShort(monitoredTodayTotalMillis),
+        yesterdaySameTimeMillis = monitoredYesterdayTotalMillis,
+        todayTotalDurationText = monitoredDurationText,
+        monitoredTotalDurationText = monitoredDurationText,
         comparisonChangeText = changeText,
         isTrendingDown = isTrendingDown,
     )

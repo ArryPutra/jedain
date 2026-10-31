@@ -17,9 +17,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,23 +42,29 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.SelfImprovement
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,11 +74,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -161,8 +170,14 @@ fun InterventionScreen(
     val canExtend = remember(currentMode) { BreakSessionManager.canExtend(context) }
     val consecutiveExtensions = remember(currentMode) { BreakSessionManager.getConsecutiveExtensions(context) }
 
+    var showDurationSheet by rememberSaveable { mutableStateOf(false) }
+
     // Intercept back button based on active step
     BackHandler {
+        if (showDurationSheet) {
+            showDurationSheet = false
+            return@BackHandler
+        }
         when (currentMode) {
             InterventionViewMode.CONFIRMATION -> {
                 currentMode = InterventionViewMode.BREATHING
@@ -203,8 +218,7 @@ fun InterventionScreen(
                             canExtend = canExtend,
                             consecutiveExtensions = consecutiveExtensions,
                             onTakeRest = {
-                                BreakSessionManager.startRest(context)
-                                currentMode = InterventionViewMode.RESTING
+                                showDurationSheet = true
                             },
                             onContinueSession = {
                                 currentMode = InterventionViewMode.BREATHING
@@ -229,8 +243,8 @@ fun InterventionScreen(
                                 currentMode = InterventionViewMode.CONFIRMATION
                             },
                             onCancelAndRest = {
-                                BreakSessionManager.startRest(context)
-                                currentMode = InterventionViewMode.RESTING
+                                currentMode = InterventionViewMode.EXPIRED
+                                showDurationSheet = true
                             },
                         )
                     }
@@ -250,6 +264,21 @@ fun InterventionScreen(
                 }
             }
         }
+    }
+
+    if (showDurationSheet) {
+        val initialRestMinutes = remember { BreakSessionManager.getLastRestDurationMinutes(context) }
+        val initialIsCustom = remember { BreakSessionManager.isLastRestCustom(context) }
+        BreakDurationSelectionBottomSheet(
+            initialMinutes = initialRestMinutes,
+            initialIsCustom = initialIsCustom,
+            onDismiss = { showDurationSheet = false },
+            onConfirmRest = { selectedMinutes, isCustom ->
+                showDurationSheet = false
+                BreakSessionManager.startRest(context, selectedMinutes, isCustom)
+                currentMode = InterventionViewMode.RESTING
+            },
+        )
     }
 }
 
@@ -341,7 +370,7 @@ private fun SessionExpiredView(
                     .padding(14.dp),
             ) {
                 Text(
-                    text = "Batas 2 kali perpanjangan berturut-turut telah digunakan. Ambil jeda 5 menit untuk memulai sesi baru.",
+                    text = "Batas 2 kali perpanjangan berturut-turut telah digunakan. Ambil sesi jeda untuk memulai sesi baru.",
                     fontSize = 13.sp,
                     color = palette.textSecondary,
                     textAlign = TextAlign.Center,
@@ -352,7 +381,7 @@ private fun SessionExpiredView(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Opsi 1: Ambil Jeda 5 Menit (Utama)
+        // Opsi 1: Ambil Sesi Jeda (Utama)
         Button(
             onClick = onTakeRest,
             modifier = Modifier
@@ -375,7 +404,7 @@ private fun SessionExpiredView(
                 )
                 Spacer(modifier = Modifier.size(8.dp))
                 Text(
-                    text = "Ambil Jeda 5 Menit",
+                    text = "Ambil Sesi Jeda",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -454,7 +483,7 @@ private fun RestingCountdownView(
         }
     }
 
-    val totalRestMillis = BreakSessionManager.REST_DURATION_MILLIS
+    val totalRestMillis = remember { BreakSessionManager.getTotalRestMillis(context) }
     val progress = ((totalRestMillis - remainingMillis).toFloat() / totalRestMillis.toFloat())
         .coerceIn(0f, 1f)
 
@@ -795,7 +824,7 @@ private fun BreathingReflectionView(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                text = "Batal & Ambil Jeda 5 Menit",
+                text = "Batal & Ambil Sesi Jeda",
                 fontSize = 13.sp,
                 color = palette.textSecondary,
             )
@@ -985,6 +1014,362 @@ private fun ConsciousConfirmationView(
                 text = "Kembali ke Panduan Napas",
                 fontSize = 13.sp,
                 color = palette.textSecondary,
+            )
+        }
+    }
+}
+
+/**
+ * Bottom sheet untuk memilih durasi istirahat saat pengguna memilih "Ambil sesi jeda".
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BreakDurationSelectionBottomSheet(
+    initialMinutes: Int,
+    initialIsCustom: Boolean,
+    onDismiss: () -> Unit,
+    onConfirmRest: (durationMinutes: Int, isCustom: Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = JedaInTheme.colors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var selectedMinutes by rememberSaveable(initialMinutes) {
+        mutableIntStateOf(initialMinutes)
+    }
+    var isCustom by rememberSaveable(initialIsCustom) {
+        mutableStateOf(initialIsCustom)
+    }
+    var customTextInput by rememberSaveable {
+        val defaultCustom = if (initialIsCustom) initialMinutes.toString() else "15"
+        mutableStateOf(defaultCustom)
+    }
+
+    val parsedCustom = customTextInput.toIntOrNull()
+    val isCustomValid = parsedCustom != null && parsedCustom in 1..180
+    val customErrorMessage = when {
+        customTextInput.isBlank() -> "Masukkan durasi istirahat."
+        parsedCustom != null && parsedCustom < 1 -> "Minimal 1 menit."
+        parsedCustom != null && parsedCustom > 180 -> "Maksimal 180 menit."
+        else -> null
+    }
+
+    val activeDurationMinutes = if (isCustom) (parsedCustom ?: selectedMinutes) else selectedMinutes
+    val isConfirmEnabled = if (isCustom) isCustomValid else true
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = palette.surface,
+        contentColor = palette.textPrimary,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Header
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Berapa lama kamu ingin beristirahat?",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary,
+                )
+                Text(
+                    text = "Pilih durasi jeda yang sesuai dengan kebutuhanmu.",
+                    fontSize = 13.sp,
+                    color = palette.textSecondary,
+                    lineHeight = 18.sp,
+                )
+            }
+
+            // Duration choices grid: 1, 3, 5, 10 menit & Custom
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    RestDurationChipItem(
+                        label = "1 menit",
+                        isSelected = !isCustom && selectedMinutes == 1,
+                        onClick = {
+                            isCustom = false
+                            selectedMinutes = 1
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    RestDurationChipItem(
+                        label = "3 menit",
+                        isSelected = !isCustom && selectedMinutes == 3,
+                        onClick = {
+                            isCustom = false
+                            selectedMinutes = 3
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    RestDurationChipItem(
+                        label = "5 menit",
+                        isSelected = !isCustom && selectedMinutes == 5,
+                        onClick = {
+                            isCustom = false
+                            selectedMinutes = 5
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    RestDurationChipItem(
+                        label = "10 menit",
+                        isSelected = !isCustom && selectedMinutes == 10,
+                        onClick = {
+                            isCustom = false
+                            selectedMinutes = 10
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                val customLabel = if (isCustom && parsedCustom != null && parsedCustom in 1..180) {
+                    "Custom ($parsedCustom m)"
+                } else {
+                    "Custom"
+                }
+                RestDurationChipItem(
+                    label = customLabel,
+                    isSelected = isCustom,
+                    onClick = {
+                        isCustom = true
+                        if (parsedCustom != null && parsedCustom in 1..180) {
+                            selectedMinutes = parsedCustom
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // Custom input field when Custom is selected
+            if (isCustom) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = palette.background,
+                    border = BorderStroke(1.dp, palette.border),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "Tentukan Durasi Kustom",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.textSecondary,
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = customTextInput,
+                                onValueChange = { input ->
+                                    val digitsOnly = input.filter { it.isDigit() }
+                                    customTextInput = digitsOnly
+                                    digitsOnly.toIntOrNull()?.let {
+                                        if (it in 1..180) {
+                                            selectedMinutes = it
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                placeholder = {
+                                    Text(
+                                        text = "Contoh: 15",
+                                        color = palette.textSecondary.copy(alpha = 0.5f),
+                                    )
+                                },
+                                trailingIcon = {
+                                    Text(
+                                        text = "menit",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = palette.textSecondary,
+                                        modifier = Modifier.padding(end = 12.dp),
+                                    )
+                                },
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done,
+                                ),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = if (customErrorMessage != null) palette.durationRed else palette.accent,
+                                    unfocusedBorderColor = if (customErrorMessage != null) palette.durationRed else palette.divider,
+                                    focusedContainerColor = palette.surface,
+                                    unfocusedContainerColor = palette.surface,
+                                    cursorColor = palette.accent,
+                                    focusedTextColor = palette.textPrimary,
+                                    unfocusedTextColor = palette.textPrimary,
+                                ),
+                                isError = customErrorMessage != null,
+                            )
+
+                            // Quick +/- buttons
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val current = customTextInput.toIntOrNull() ?: 15
+                                            val next = (current - 1).coerceAtLeast(1)
+                                            customTextInput = next.toString()
+                                            selectedMinutes = next
+                                        },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = palette.surface,
+                                    border = BorderStroke(1.dp, palette.border),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Remove,
+                                            contentDescription = "Kurang 1 menit",
+                                            tint = palette.textPrimary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val current = customTextInput.toIntOrNull() ?: 15
+                                            val next = (current + 1).coerceAtMost(180)
+                                            customTextInput = next.toString()
+                                            selectedMinutes = next
+                                        },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = palette.surface,
+                                    border = BorderStroke(1.dp, palette.border),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Add,
+                                            contentDescription = "Tambah 1 menit",
+                                            tint = palette.textPrimary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (customErrorMessage != null) {
+                            Text(
+                                text = customErrorMessage,
+                                fontSize = 11.sp,
+                                color = palette.durationRed,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Tombol "Mulai istirahat"
+            Button(
+                onClick = {
+                    onConfirmRest(activeDurationMinutes, isCustom)
+                },
+                enabled = isConfirmEnabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = palette.accent,
+                    contentColor = palette.surface,
+                    disabledContainerColor = palette.divider,
+                    disabledContentColor = palette.textSecondary,
+                ),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.HourglassEmpty,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text(
+                        text = "Mulai istirahat",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RestDurationChipItem(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = JedaInTheme.colors
+
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) palette.accent else palette.background,
+        label = "RestDurationBg",
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isSelected) palette.surface else palette.textPrimary,
+        label = "RestDurationText",
+    )
+    val borderColor = if (isSelected) palette.accent else palette.border
+
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(role = Role.RadioButton, onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = bgColor,
+        border = BorderStroke(1.dp, borderColor),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 13.dp, horizontal = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textColor,
+                textAlign = TextAlign.Center,
             )
         }
     }
