@@ -43,8 +43,10 @@ import com.example.jedain.ui.theme.DurationYellowDark
 import com.example.jedain.ui.theme.DurationYellowLight
 import com.example.jedain.ui.theme.SurfaceDarkCharcoal
 import com.example.jedain.ui.theme.SurfaceWhite
+import com.example.jedain.ui.theme.TextMediumGray
 import com.example.jedain.ui.theme.TextNearBlack
 import com.example.jedain.ui.theme.TextPrimaryDark
+import com.example.jedain.ui.theme.TextSecondaryDark
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -113,7 +115,9 @@ class FloatingBubbleService : Service() {
     private var baseTodayMillis: Long = 0L
     private var baseElapsedRealtime: Long = 0L
     private var isMonitoredAppForegroundNow: Boolean = false
+    private var totalScreenTimeTextView: TextView? = null
     private var lastDisplayedText: String? = null
+    private var lastDisplayedTotalText: String? = null
     private var lastBorderColor: Int? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -182,6 +186,7 @@ class FloatingBubbleService : Service() {
         Log.d(TAG, "onConfigurationChanged triggered")
         repositionOnConfigurationChange()
         lastDisplayedText = null
+        lastDisplayedTotalText = null
         lastBorderColor = null
         updateRealtimeTimer()
     }
@@ -213,7 +218,7 @@ class FloatingBubbleService : Service() {
 
     private fun initBubbleView() {
         val density = resources.displayMetrics.density
-        val heightPx = (40 * density).roundToInt()
+        val heightPx = (44 * density).roundToInt()
         val screenWidth = getScreenWidth()
         val screenHeight = getScreenHeight()
 
@@ -273,28 +278,56 @@ class FloatingBubbleService : Service() {
         val logoView = ImageView(this).apply {
             layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
                 marginEnd = iconMarginEndPx
+                gravity = Gravity.CENTER_VERTICAL
             }
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
 
-        val textView = TextView(this).apply {
+        val textColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        }
+
+        val timerView = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             fontFeatureSettings = "tnum"
             maxLines = 1
             includeFontPadding = false
-            gravity = Gravity.CENTER_VERTICAL
         }
 
+        val totalView = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = (1 * density).roundToInt()
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            fontFeatureSettings = "tnum"
+            maxLines = 1
+            includeFontPadding = false
+            visibility = View.GONE
+        }
+
+        textColumn.addView(timerView)
+        textColumn.addView(totalView)
+
         container.addView(logoView)
-        container.addView(textView)
+        container.addView(textColumn)
 
         logoImageView = logoView
-        timeTextView = textView
+        timeTextView = timerView
+        totalScreenTimeTextView = totalView
         bubbleView = container
 
         val isDark = isSystemDarkMode()
@@ -304,7 +337,7 @@ class FloatingBubbleService : Service() {
 
         val background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 20f * density
+            cornerRadius = 22f * density
             setColor(initialBg)
             setStroke(strokeWidthPx, initialBorder)
         }
@@ -322,6 +355,7 @@ class FloatingBubbleService : Service() {
         }
         updatePillUI(
             text = initialText,
+            totalText = null,
             borderColor = initialBorder,
             isDark = isDark,
         )
@@ -449,13 +483,15 @@ class FloatingBubbleService : Service() {
 
     private fun updatePillUI(
         text: String,
+        totalText: String?,
         borderColor: Int,
         isDark: Boolean,
     ) {
         val textChanged = (text != lastDisplayedText)
+        val totalTextChanged = (totalText != lastDisplayedTotalText)
         val borderChanged = (borderColor != lastBorderColor)
 
-        if (!textChanged && !borderChanged) {
+        if (!textChanged && !totalTextChanged && !borderChanged) {
             return
         }
 
@@ -463,6 +499,7 @@ class FloatingBubbleService : Service() {
         val strokeWidthPx = (1.5f * density).roundToInt().coerceAtLeast(1)
         val bgColor = if (isDark) SurfaceDarkCharcoal.toArgb() else SurfaceWhite.toArgb()
         val textColor = if (isDark) TextPrimaryDark.toArgb() else TextNearBlack.toArgb()
+        val totalTextColor = if (isDark) TextSecondaryDark.toArgb() else TextMediumGray.toArgb()
         val logoRes = if (isDark) R.drawable.dark_logo else R.drawable.logo
 
         if (textChanged) {
@@ -470,7 +507,20 @@ class FloatingBubbleService : Service() {
             lastDisplayedText = text
         }
 
+        if (totalTextChanged) {
+            val totalView = totalScreenTimeTextView
+            if (totalText != null) {
+                totalView?.text = totalText
+                totalView?.visibility = View.VISIBLE
+            } else {
+                totalView?.text = ""
+                totalView?.visibility = View.GONE
+            }
+            lastDisplayedTotalText = totalText
+        }
+
         timeTextView?.setTextColor(textColor)
+        totalScreenTimeTextView?.setTextColor(totalTextColor)
         logoImageView?.setImageResource(logoRes)
 
         if (borderChanged) {
@@ -481,7 +531,7 @@ class FloatingBubbleService : Service() {
 
         Log.d(
             TAG,
-            "Bubble UI updated: text='$text', borderColor=#${Integer.toHexString(borderColor)}, isDark=$isDark",
+            "Bubble UI updated: text='$text', totalText='$totalText', borderColor=#${Integer.toHexString(borderColor)}, isDark=$isDark",
         )
     }
 
@@ -706,14 +756,14 @@ class FloatingBubbleService : Service() {
         val hasUsagePermission = repository.hasUsageStatsPermission()
         if (!hasUsagePermission) {
             val neutralBorder = resolveBubbleBorderColor(0.0, isDark)
-            updatePillUI(text = "--", borderColor = neutralBorder, isDark = isDark)
+            updatePillUI(text = "--", totalText = null, borderColor = neutralBorder, isDark = isDark)
             return
         }
 
         val monitoredPackages = repository.getMonitoredPackageSet()
         if (monitoredPackages.isEmpty()) {
             val neutralBorder = resolveBubbleBorderColor(0.0, isDark)
-            updatePillUI(text = "00s", borderColor = neutralBorder, isDark = isDark)
+            updatePillUI(text = "00s", totalText = null, borderColor = neutralBorder, isDark = isDark)
             return
         }
 
@@ -735,6 +785,8 @@ class FloatingBubbleService : Service() {
         }
 
         val currentTotalMillis = baseTodayMillis + activeDelta
+        val totalText = formatScreenTimeShort(currentTotalMillis)
+
         val targetSettings = targetPrefs.loadSettings()
         val targetMinutes = targetSettings.validatedDailyTargetMinutes
         val targetMillis = targetMinutes * 60_000L
@@ -748,7 +800,7 @@ class FloatingBubbleService : Service() {
         val effectiveRatio = maxOf(sessionElapsedRatio, dailyRatio)
         val borderColor = resolveBubbleBorderColor(effectiveRatio, isDark)
 
-        updatePillUI(text = timerText, borderColor = borderColor, isDark = isDark)
+        updatePillUI(text = timerText, totalText = totalText, borderColor = borderColor, isDark = isDark)
     }
 
     private fun checkIsMonitoredAppInForeground(): Boolean {

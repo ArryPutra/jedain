@@ -271,16 +271,34 @@ object BreakSessionManager {
         }
     }
 
-    fun confirmSessionIntent(context: Context, selectedIntent: String) {
+    @JvmOverloads
+    fun confirmSessionIntent(
+        context: Context,
+        selectedIntent: String,
+        durationMinutes: Int? = null,
+    ) {
         ensureInitialized(context)
         lastMonotonicTime = SystemClock.elapsedRealtime()
+        val sessionMillis = if (durationMinutes != null && durationMinutes > 0) {
+            durationMinutes.coerceIn(1, 30) * 60L * 1000L
+        } else {
+            val configuredMinutes = getConfiguredSessionMinutes(context)
+            configuredMinutes * 60L * 1000L
+        }
+
+        resetReminderFlags(context)
+        SessionReminderNotificationHelper.cancelAllReminders(context)
+
         getPrefs(context).edit {
             putBoolean(KEY_SESSION_INTENT_CONFIRMED, true)
             putString(KEY_LAST_SESSION_INTENT, selectedIntent)
             putBoolean(KEY_PENDING_INTENT_SNACKBAR, true)
             putString(KEY_STATE, BreakSessionState.ACTIVE.name)
+            putLong(KEY_REMAINING_MILLIS, sessionMillis)
+            putLong(KEY_TOTAL_SESSION_MILLIS, sessionMillis)
+            putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
         }
-        Log.d(TAG, "Session intent confirmed: '$selectedIntent'")
+        Log.d(TAG, "Session intent confirmed: '$selectedIntent' with duration: ${sessionMillis / 60000} min ($sessionMillis ms)")
     }
 
     fun getLastSessionIntent(context: Context): String? {
@@ -453,6 +471,16 @@ object BreakSessionManager {
         return REST_DURATION_MILLIS
     }
 
+    fun isSessionActive(context: Context): Boolean {
+        val state = getSessionState(context)
+        if (state == BreakSessionState.RESTING || state == BreakSessionState.EXPIRED) return false
+        val prefs = getPrefs(context)
+        val isConfirmed = prefs.getBoolean(KEY_SESSION_INTENT_CONFIRMED, false)
+        val remaining = prefs.getLong(KEY_REMAINING_MILLIS, 0L)
+        val total = prefs.getLong(KEY_TOTAL_SESSION_MILLIS, 0L)
+        return (isConfirmed || (remaining in 1L until total)) && remaining > 0L
+    }
+
     @JvmOverloads
     fun startRest(
         context: Context,
@@ -470,6 +498,9 @@ object BreakSessionManager {
             putString(KEY_STATE, BreakSessionState.RESTING.name)
             putLong(KEY_REST_END_TIME, restEndTime)
             putLong(KEY_TOTAL_REST_MILLIS, restDurationMillis)
+            // Sisa waktu sesi dibuang saat jeda dimulai lebih awal
+            putLong(KEY_REMAINING_MILLIS, 0L)
+            putInt(KEY_CONSECUTIVE_EXTENSIONS, 0)
         }
         Log.d(TAG, "Started $validMinutes-minute rest period. Ends at $restEndTime")
     }

@@ -1,6 +1,7 @@
 package com.example.jedain
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,8 +16,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,10 +32,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.automirrored.filled.TrendingDown
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Layers
@@ -51,6 +51,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Scaffold
@@ -62,10 +63,15 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,6 +101,8 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class JedaInScreen {
@@ -106,6 +114,15 @@ enum class JedaInScreen {
 private enum class DisclosurePermissionType {
     USAGE_ACCESS,
     OVERLAY,
+}
+
+const val DISABLE_BUBBLE_CONFIRMATION_PHRASE =
+    "Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama."
+
+fun validateDisableBubbleConfirmationPhrase(input: String): Boolean {
+    val trimmed = input.trim()
+    return trimmed.equals(DISABLE_BUBBLE_CONFIRMATION_PHRASE, ignoreCase = true) ||
+        trimmed.equals(DISABLE_BUBBLE_CONFIRMATION_PHRASE.removeSuffix("."), ignoreCase = true)
 }
 
 // --- Root Screen ---
@@ -290,6 +307,19 @@ fun HomeScreen(
     var isBubbleEnabled by rememberSaveable { mutableStateOf(bubbleController.isEnabled()) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    var tickTrigger by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(lifecycleOwner) {
+        while (isActive) {
+            delay(1000L)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                tickTrigger = SystemClock.elapsedRealtime()
+            }
+        }
+    }
+    var showBreakDurationPicker by rememberSaveable { mutableStateOf(false) }
+    var showDisableBubbleConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var disableBubbleConfirmationInput by rememberSaveable { mutableStateOf("") }
+
     var hasNotificationPermission by rememberSaveable {
         mutableStateOf(PermissionHelper.hasNotificationPermission(context))
     }
@@ -300,7 +330,9 @@ fun HomeScreen(
         bubbleController.setEnabled(true)
         isBubbleEnabled = true
         hasNotificationPermission = true
+        BreakSessionManager.resetSession(context)
         FloatingBubbleService.start(context)
+        DailyAwarenessWidgetProvider.updateAllWidgets(context)
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -340,13 +372,18 @@ fun HomeScreen(
                 } else {
                     bubbleController.setEnabled(true)
                     isBubbleEnabled = true
+                    BreakSessionManager.resetSession(context)
                     FloatingBubbleService.start(context)
+                    DailyAwarenessWidgetProvider.updateAllWidgets(context)
                 }
             }
         } else {
             bubbleController.setEnabled(false)
             isBubbleEnabled = false
             FloatingBubbleService.stop(context)
+            BreakSessionManager.onRestCompleted(context)
+            BreakSessionManager.resetSession(context)
+            DailyAwarenessWidgetProvider.updateAllWidgets(context)
         }
     }
 
@@ -384,7 +421,7 @@ fun HomeScreen(
                     onNextPromptClick = onNextPromptClick,
                 )
 
-                // Kartu Status Izin Sistem (otomatis tersembunyi jika semua izin sudah aktif)
+                // Card Izin Aplikasi (jika izin belum lengkap)
                 if (!monitoredAppsUiState.hasUsageAccessPermission ||
                     !monitoredAppsUiState.hasOverlayPermission ||
                     !hasNotificationPermission
@@ -413,15 +450,20 @@ fun HomeScreen(
                     )
                 }
 
-                // Kartu Waktu Layar Hari Ini (dengan data nyata UsageStatsManager & tombol Atur Target)
+                // Kartu Waktu Layar Aplikasi Dipantau
                 TodayScreenTimeCard(
                     durationText = monitoredAppsUiState.todayTotalDurationText,
                     changeText = monitoredAppsUiState.comparisonChangeText,
-                    comparisonNote = "Dibandingkan pada waktu yang sama",
                     isTrendingDown = monitoredAppsUiState.isTrendingDown,
                     targetMinutes = targetMinutes,
                     totalUsageMillis = monitoredAppsUiState.todayTotalMillis,
                     onTargetSettingsClick = onTargetSettingsClick,
+                )
+
+                // Blok Status Sesi & Ambil Jeda
+                SessionStatusCard(
+                    onTakeBreakClick = { showBreakDurationPicker = true },
+                    tickTrigger = tickTrigger,
                 )
 
                 // Daftar Aplikasi yang Dipantau & Tombol Kelola Aplikasi
@@ -431,15 +473,52 @@ fun HomeScreen(
                     onAppClick = onAppClick,
                 )
 
-                // Kartu Bubble Mengambang dengan Switch
+                // Card Bubble Mengambang (Posisi Paling Bawah)
                 FloatingBubbleCard(
                     isEnabled = isBubbleEnabled,
-                    onCheckedChange = onToggleBubble,
+                    onCheckedChange = { willEnable ->
+                        if (willEnable) {
+                            onToggleBubble(true)
+                        } else {
+                            showDisableBubbleConfirmDialog = true
+                        }
+                    },
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
+    }
+
+    if (showBreakDurationPicker) {
+        val initialRestMinutes = remember { BreakSessionManager.getLastRestDurationMinutes(context) }
+        val initialIsCustom = remember { BreakSessionManager.isLastRestCustom(context) }
+        BreakDurationSelectionBottomSheet(
+            initialMinutes = initialRestMinutes,
+            initialIsCustom = initialIsCustom,
+            onDismiss = { showBreakDurationPicker = false },
+            onConfirmRest = { selectedMinutes, isCustom ->
+                showBreakDurationPicker = false
+                BreakSessionManager.startRest(context, selectedMinutes, isCustom)
+                DailyAwarenessWidgetProvider.updateAllWidgets(context)
+            },
+        )
+    }
+
+    if (showDisableBubbleConfirmDialog) {
+        DisableBubbleConfirmationDialog(
+            input = disableBubbleConfirmationInput,
+            onInputChange = { disableBubbleConfirmationInput = it },
+            onConfirm = {
+                showDisableBubbleConfirmDialog = false
+                disableBubbleConfirmationInput = ""
+                onToggleBubble(false)
+            },
+            onDismiss = {
+                showDisableBubbleConfirmDialog = false
+                disableBubbleConfirmationInput = ""
+            },
+        )
     }
 
     pendingDisclosurePermission?.let { permissionType ->
@@ -461,6 +540,160 @@ fun HomeScreen(
     }
 }
 
+// --- Dialog Konfirmasi Penonaktifan Bubble Mengambang ---
+
+@Composable
+fun DisableBubbleConfirmationDialog(
+    input: String,
+    onInputChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = JedaInTheme.colors
+    val isConfirmed = remember(input) {
+        validateDisableBubbleConfirmationPhrase(input)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = colors.surface,
+        titleContentColor = colors.textPrimary,
+        textContentColor = colors.textSecondary,
+        title = {
+            Text(
+                text = "Nonaktifkan Bubble Mengambang?",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // Deskripsi
+                Text(
+                    text = "Jika Bubble dinonaktifkan, sistem pemantauan, countdown, dan sesi jeda JedaIn tidak akan berjalan sampai kamu mengaktifkannya kembali.",
+                    fontSize = 13.sp,
+                    color = colors.textPrimary,
+                    lineHeight = 18.sp,
+                )
+
+                // Penjelasan tambahan
+                Text(
+                    text = "Kamu tidak akan mendapatkan pengingat ketika terlalu lama menggunakan aplikasi yang dipantau.",
+                    fontSize = 13.sp,
+                    color = colors.textSecondary,
+                    lineHeight = 18.sp,
+                )
+
+                // Konfirmasi kesadaran
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colors.targetCard)
+                        .border(BorderStroke(1.dp, colors.border), RoundedCornerShape(16.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Sebelum melanjutkan, pahami konsekuensinya.",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                    )
+
+                    Text(
+                        text = "Ketik kalimat berikut untuk memastikan kamu memahami konsekuensinya:",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        lineHeight = 16.sp,
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.background,
+                        border = BorderStroke(1.dp, colors.divider),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = DISABLE_BUBBLE_CONFIRMATION_PHRASE,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary,
+                            modifier = Modifier.padding(10.dp),
+                            lineHeight = 17.sp,
+                        )
+                    }
+                }
+
+                // Input Text Field
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = onInputChange,
+                    placeholder = {
+                        Text(
+                            text = "Ketik kalimat di atas...",
+                            fontSize = 12.sp,
+                            color = colors.textSecondary.copy(alpha = 0.6f),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    textStyle = LocalTextStyle.current.copy(
+                        fontSize = 13.sp,
+                        color = colors.textPrimary,
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = if (isConfirmed) colors.durationGreen else colors.accent,
+                        unfocusedBorderColor = colors.border,
+                        focusedContainerColor = colors.surface,
+                        unfocusedContainerColor = colors.surface,
+                        cursorColor = colors.accent,
+                    ),
+                    maxLines = 3,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = isConfirmed,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.surface,
+                    disabledContainerColor = colors.border,
+                    disabledContentColor = colors.textSecondary.copy(alpha = 0.5f),
+                ),
+            ) {
+                Text(
+                    text = "Ya, Nonaktifkan",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+            ) {
+                Text(
+                    text = "Batalkan",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                )
+            }
+        },
+    )
+}
+
 // --- Kartu Bubble Mengambang dengan Switch ---
 
 @Composable
@@ -472,78 +705,96 @@ fun FloatingBubbleCard(
     val colors = JedaInTheme.colors
 
     Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(24.dp),
         color = colors.surface,
         border = BorderStroke(1.dp, colors.border),
+        shadowElevation = 0.dp,
         modifier = modifier.fillMaxWidth(),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Baris 1: Judul di kiri dan Switch di kanan
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.weight(1f),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = colors.targetCard,
-                    modifier = Modifier.size(44.dp),
+                Text(
+                    text = "Bubble Mengambang",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                )
+
+                Switch(
+                    checked = isEnabled,
+                    onCheckedChange = onCheckedChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = colors.surface,
+                        checkedTrackColor = colors.accent,
+                        uncheckedThumbColor = colors.textSecondary,
+                        uncheckedTrackColor = colors.background,
+                        uncheckedBorderColor = colors.border,
+                    ),
+                )
+            }
+
+            // Baris 2: Badge status "Aktif" / "Nonaktif" di bawah judul (wrapContentWidth)
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (isEnabled) colors.durationGreenBg else colors.targetCard,
+                border = BorderStroke(
+                    1.dp,
+                    if (isEnabled) colors.durationGreen.copy(alpha = 0.35f) else colors.border,
+                ),
+                modifier = Modifier.wrapContentWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Layers,
-                            contentDescription = "Bubble mengambang",
-                            tint = colors.iconCharcoal,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        text = "Bubble mengambang",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.textPrimary,
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (isEnabled) colors.durationGreen else colors.textSecondary.copy(alpha = 0.6f)),
                     )
                     Text(
-                        text = "Tampilkan sisa waktu sesi jeda saat aplikasi dipantau dibuka",
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
-                        lineHeight = 17.sp,
+                        text = if (isEnabled) "Aktif" else "Nonaktif",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isEnabled) colors.durationGreen else colors.textSecondary,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            // Deskripsi Card
+            Text(
+                text = "Tampilkan penghitung waktu mengambang saat kamu menggunakan aplikasi yang dipantau.",
+                fontSize = 13.sp,
+                color = colors.textPrimary,
+                lineHeight = 18.sp,
+            )
 
-            Switch(
-                checked = isEnabled,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = colors.surface,
-                    checkedTrackColor = colors.accent,
-                    uncheckedThumbColor = colors.textSecondary,
-                    uncheckedTrackColor = colors.background,
-                    uncheckedBorderColor = colors.border,
-                ),
+            HorizontalDivider(color = colors.divider, thickness = 1.dp)
+
+            // Informasi Tambahan
+            Text(
+                text = "Bubble Mengambang diperlukan agar sistem pemantauan, countdown, dan sesi jeda JedaIn dapat berjalan.",
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+                lineHeight = 17.sp,
             )
         }
     }
 }
-
-
 
 // --- Subtle Organic Background Shapes ---
 
@@ -701,107 +952,20 @@ fun FixedHeaderSection(
 @Composable
 fun GreetingSection(
     dateText: String,
-    prompt: ActivityPrompt,
-    onNextPromptClick: () -> Unit,
     modifier: Modifier = Modifier,
+    prompt: ActivityPrompt? = null,
+    onNextPromptClick: () -> Unit = {},
 ) {
     val colors = JedaInTheme.colors
 
-    Column(
+    Text(
+        text = dateText,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Medium,
+        color = colors.textSecondary,
+        letterSpacing = 0.1.sp,
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        // A. Baris atas: Tanggal di kiri, Tombol ganti ide berbentuk pill di kanan
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = dateText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = colors.textSecondary,
-                letterSpacing = 0.1.sp,
-            )
-
-            Surface(
-                onClick = onNextPromptClick,
-                shape = CircleShape,
-                color = colors.surface,
-                border = BorderStroke(1.dp, colors.border),
-                shadowElevation = 0.dp,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Ide kegiatan lain",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Text(
-                        text = "Ide kegiatan lain",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.textSecondary,
-                    )
-                }
-            }
-        }
-
-        // B, C, D. AnimatedContent untuk pergantian ide kegiatan
-        AnimatedContent(
-            targetState = prompt,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(150))
-            },
-            label = "GreetingPromptAnimation",
-        ) { targetPrompt ->
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // B. Badge kategori
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = colors.surface,
-                    border = BorderStroke(1.dp, colors.border),
-                    shadowElevation = 0.dp,
-                ) {
-                    Text(
-                        text = targetPrompt.category.label,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                    )
-                }
-
-                // C. Headline
-                Text(
-                    text = targetPrompt.headline,
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 27.sp,
-                    color = colors.textPrimary,
-                    letterSpacing = (-0.3).sp,
-                )
-
-                // D. Subtitle
-                Text(
-                    text = targetPrompt.subtitle,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Normal,
-                    lineHeight = 18.sp,
-                    color = colors.textSecondary,
-                )
-            }
-        }
-    }
+    )
 }
 
 // --- Section 1B: Kartu Status Izin Sistem & Prominent Disclosure ---
@@ -1088,14 +1252,14 @@ fun resolveTargetExceededTier(
     }
 }
 
-// --- Section 2: Kartu Waktu Layar Hari Ini ---
+// --- Section 2: Kartu Waktu Layar Aplikasi Dipantau ---
 
 @Composable
 fun TodayScreenTimeCard(
     durationText: String,
     changeText: String,
-    comparisonNote: String,
     modifier: Modifier = Modifier,
+    comparisonNote: String = "",
     isTrendingDown: Boolean = true,
     targetMinutes: Int = 0,
     totalUsageMillis: Long = 0L,
@@ -1125,6 +1289,26 @@ fun TodayScreenTimeCard(
         indicatorColor
     } else {
         colors.textPrimary
+    }
+
+    // Format perbandingan satu baris: "↓ 3j 42m dari kemarin (jam yang sama)"
+    val singleLineComparisonText = remember(changeText, isTrendingDown) {
+        when {
+            changeText.contains("lebih sedikit dari kemarin", ignoreCase = true) -> {
+                val diff = changeText.substringBefore(" lebih sedikit dari kemarin").trim()
+                "↓ $diff dari kemarin (jam yang sama)"
+            }
+            changeText.contains("lebih banyak dari kemarin", ignoreCase = true) -> {
+                val diff = changeText.substringBefore(" lebih banyak dari kemarin").trim()
+                "↑ $diff dari kemarin (jam yang sama)"
+            }
+            changeText.contains("Sama seperti kemarin", ignoreCase = true) -> {
+                "Sama seperti kemarin (jam yang sama)"
+            }
+            else -> {
+                changeText
+            }
+        }
     }
 
     Surface(
@@ -1162,34 +1346,13 @@ fun TodayScreenTimeCard(
                     .fillMaxWidth()
                     .padding(22.dp),
             ) {
-                // Header kartu: Judul & Icon Ponsel Berlatar Bulat Lembut
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Waktu layar hari ini",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.textSecondary,
-                    )
-
-                    Surface(
-                        shape = CircleShape,
-                        color = colors.targetCard,
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.PhoneAndroid,
-                                contentDescription = null,
-                                tint = colors.iconCharcoal,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                }
+                // Header kartu: Judul
+                Text(
+                    text = "Waktu layar aplikasi dipantau",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -1228,43 +1391,20 @@ fun TodayScreenTimeCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Perbandingan Waktu: Trend Icon Monokrom & Teks Dekat-Hitam
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        imageVector = if (isTrendingDown) {
-                            Icons.AutoMirrored.Filled.TrendingDown
-                        } else {
-                            Icons.AutoMirrored.Filled.TrendingUp
-                        },
-                        contentDescription = null,
-                        tint = colors.iconCharcoal,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = changeText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.textPrimary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Catatan Pendukung
+                // Perbandingan Waktu Satu Baris: "↓ 3j 42m dari kemarin (jam yang sama)"
                 Text(
-                    text = comparisonNote,
-                    fontSize = 12.sp,
-                    color = colors.textSecondary,
+                    text = singleLineComparisonText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textPrimary,
+                    maxLines = 1,
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Tombol Pill-Shaped Abu-Abu Terang dengan Teks Hitam
+                // Tombol Pill-Shaped Abu-Abu Terang dengan Teks Hitam Melebar Penuh di Dasar Kartu
                 Button(
                     onClick = onTargetSettingsClick,
                     shape = RoundedCornerShape(50),
@@ -1294,6 +1434,194 @@ fun TodayScreenTimeCard(
             }
         }
     }
+}
+
+// --- Section 2B: Blok Status Sesi & Ambil Jeda ---
+
+@Composable
+fun SessionStatusCard(
+    onTakeBreakClick: () -> Unit,
+    tickTrigger: Long,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val colors = JedaInTheme.colors
+
+    val isResting = remember(tickTrigger) {
+        BreakSessionManager.isResting(context) && BreakSessionManager.getRemainingRestMillis(context) > 0L
+    }
+    val isSessionActive = remember(tickTrigger, isResting) {
+        !isResting && BreakSessionManager.isSessionActive(context)
+    }
+
+    val remainingRestMillis = remember(tickTrigger, isResting) {
+        if (isResting) BreakSessionManager.getRemainingRestMillis(context) else 0L
+    }
+
+    val remainingSessionMillis = remember(tickTrigger, isSessionActive) {
+        if (isSessionActive) BreakSessionManager.getRemainingSessionMillis(context) else 0L
+    }
+
+    val totalSessionMillis = remember(tickTrigger, isSessionActive) {
+        if (isSessionActive) BreakSessionManager.getTotalSessionMillis(context) else 0L
+    }
+
+    val usedMillis = (totalSessionMillis - remainingSessionMillis).coerceAtLeast(0L)
+    val usedMinutes = (usedMillis / 60_000L).toInt()
+    val totalMinutes = (totalSessionMillis / 60_000L).toInt()
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.border),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+        ) {
+            when {
+                isResting -> {
+                    // Keadaan 2: Sedang jeda
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(colors.durationOrange),
+                        )
+                        Text(
+                            text = "Sedang jeda",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.durationOrange,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = formatTimerMmSs(remainingRestMillis),
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                        letterSpacing = (-0.5).sp,
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Waktu istirahat tersisa sebelum sesi baru",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+                isSessionActive -> {
+                    // Keadaan 1: Sesi berjalan
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.durationGreen),
+                            )
+                            Text(
+                                text = "Pemantauan aktif",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.durationGreen,
+                            )
+                        }
+
+                        Button(
+                            onClick = onTakeBreakClick,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.accent,
+                                contentColor = colors.surface,
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.height(34.dp),
+                        ) {
+                            Text(
+                                text = "Ambil jeda",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = formatTimerMmSs(remainingSessionMillis),
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                        letterSpacing = (-0.5).sp,
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Sudah dipakai $usedMinutes menit dari $totalMinutes",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+                else -> {
+                    // Keadaan 3: Tidak ada sesi (kartu pasif, layout tidak melompat)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(colors.textSecondary.copy(alpha = 0.4f)),
+                        )
+                        Text(
+                            text = "Status sesi",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textSecondary,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Belum ada sesi. Pemantauan mulai saat kamu membuka aplikasi terpantau.",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary,
+                        lineHeight = 18.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+fun formatTimerMmSs(millis: Long): String {
+    val totalSeconds = (millis.coerceAtLeast(0L) / 1000L).toInt()
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
 }
 
 // --- Section 3: Bagian Aplikasi yang Dipantau & Tombol Kelola Aplikasi ---
@@ -1545,3 +1873,30 @@ private fun MainScreenDarkPreview() {
         MainScreen()
     }
 }
+
+@Preview(showBackground = true)
+@Composable
+private fun FloatingBubbleCardPreview() {
+    JedaInTheme {
+        FloatingBubbleCard(
+            isEnabled = true,
+            onCheckedChange = {},
+            modifier = Modifier.padding(16.dp),
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun DisableBubbleConfirmationDialogPreview() {
+    JedaInTheme {
+        DisableBubbleConfirmationDialog(
+            input = "",
+            onInputChange = {},
+            onConfirm = {},
+            onDismiss = {},
+        )
+    }
+}
+
+

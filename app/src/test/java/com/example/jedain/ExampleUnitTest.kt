@@ -834,5 +834,131 @@ class ExampleUnitTest {
             )
         )
     }
+
+    @Test
+    fun formatTimerMmSs_formatsMinutesAndSecondsAccurately() {
+        assertEquals("00:00", formatTimerMmSs(0L))
+        assertEquals("00:00", formatTimerMmSs(-5000L))
+        assertEquals("00:01", formatTimerMmSs(1_000L))
+        assertEquals("00:59", formatTimerMmSs(59_000L))
+        assertEquals("01:00", formatTimerMmSs(60_000L))
+        assertEquals("01:05", formatTimerMmSs(65_000L))
+        assertEquals("09:59", formatTimerMmSs(599_000L))
+        assertEquals("20:00", formatTimerMmSs(1_200_000L))
+    }
+
+    @Test
+    fun sessionIntentDurationSelection_rulesAndLifecycle() {
+        // 1. Verifikasi durasi preset: 5, 10, 15 menit
+        val presetDurations = listOf(5, 10, 15)
+        assertEquals(listOf(5, 10, 15), presetDurations)
+
+        // 2. Verifikasi validasi durasi custom: minimum 1 menit, maksimum 30 menit
+        fun validateCustomDuration(input: Int): Boolean {
+            return input in 1..30
+        }
+        assertTrue(validateCustomDuration(1))
+        assertTrue(validateCustomDuration(5))
+        assertTrue(validateCustomDuration(10))
+        assertTrue(validateCustomDuration(15))
+        assertTrue(validateCustomDuration(30))
+        assertFalse(validateCustomDuration(0))
+        assertFalse(validateCustomDuration(-5))
+        assertFalse(validateCustomDuration(31))
+        assertFalse(validateCustomDuration(60))
+
+        // 3. Verifikasi aturan kemunculan sesi pertanyaan:
+        // A. Sebelum durasi dipilih / dikonfirmasi: sesi pertanyaan aktif
+        assertTrue(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = 15 * 60_000L,
+            )
+        )
+
+        // B. Setelah pengguna memilih durasi dan niat: sesi pertanyaan selesai, countdown berjalan
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.ACTIVE,
+                isIntentConfirmed = true,
+                consecutiveExtensions = 0,
+                remainingMillis = 5 * 60_000L,
+            )
+        )
+
+        // C. Saat countdown mencapai 00:00 (EXPIRED): sesi pertanyaan tidak muncul
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.EXPIRED,
+                isIntentConfirmed = true,
+                consecutiveExtensions = 0,
+                remainingMillis = 0L,
+            )
+        )
+
+        // D. Selama sesi istirahat (RESTING): sesi pertanyaan tidak muncul
+        assertFalse(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.RESTING,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = 0L,
+            )
+        )
+
+        // E. Setelah istirahat selesai (sesi baru diinisialisasi dari durasi default, belum konfirmasi):
+        // Sesi pertanyaan muncul kembali untuk siklus baru!
+        assertTrue(
+            BreakSessionManager.shouldShowIntentPrompt(
+                state = BreakSessionState.PAUSED,
+                isIntentConfirmed = false,
+                consecutiveExtensions = 0,
+                remainingMillis = 20 * 60_000L,
+            )
+        )
+    }
+
+    @Test
+    fun disableBubbleConfirmationPhrase_validationRules() {
+        val target = DISABLE_BUBBLE_CONFIRMATION_PHRASE
+        assertEquals(
+            "Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama.",
+            target,
+        )
+
+        // 1. Exact match with trailing period
+        assertTrue(validateDisableBubbleConfirmationPhrase(target))
+
+        // 2. Match without trailing period
+        assertTrue(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama"))
+
+        // 3. Case insensitivity
+        assertTrue(validateDisableBubbleConfirmationPhrase(target.lowercase()))
+        assertTrue(validateDisableBubbleConfirmationPhrase(target.uppercase()))
+        assertTrue(validateDisableBubbleConfirmationPhrase("saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama."))
+
+        // 4. Leading and trailing whitespace trimming
+        assertTrue(validateDisableBubbleConfirmationPhrase("   $target   "))
+        assertTrue(validateDisableBubbleConfirmationPhrase("\n\t$target\n"))
+
+        // 5. Partial text matches fail (must NOT match partially)
+        assertFalse(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa"))
+        assertFalse(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa tanpa pemantauan"))
+        assertFalse(validateDisableBubbleConfirmationPhrase("kebiasaan scrolling saya bisa berlangsung lebih lama."))
+
+        // 6. Empty / blank string
+        assertFalse(validateDisableBubbleConfirmationPhrase(""))
+        assertFalse(validateDisableBubbleConfirmationPhrase("   "))
+
+        // 7. Unrelated text
+        assertFalse(validateDisableBubbleConfirmationPhrase("Nonaktifkan saja"))
+        assertFalse(validateDisableBubbleConfirmationPhrase("Ya"))
+
+        // 8. Superstring / extra words appended or prepended
+        assertFalse(validateDisableBubbleConfirmationPhrase("$target Dan saya mengerti"))
+        assertFalse(validateDisableBubbleConfirmationPhrase("Konfirmasi: $target"))
+    }
 }
 

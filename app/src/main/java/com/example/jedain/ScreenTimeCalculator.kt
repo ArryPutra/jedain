@@ -730,6 +730,8 @@ object ScreenTimeCalculator {
             .atStartOfDay(zoneId)
             .toInstant()
             .toEpochMilli()
+        val elapsedSinceTodayStart = (nowMillis - todayStartMillis).coerceAtLeast(0L)
+        val yesterdaySameTimeMillis = yesterdayStartMillis + elapsedSinceTodayStart
 
         val shouldLogDiag = BuildConfig.DEBUG && (nowMillis - lastDiagnosticLogMillis >= 10_000L)
         if (shouldLogDiag) {
@@ -757,11 +759,11 @@ object ScreenTimeCalculator {
             queryPackageUsageMillis(
                 usageStatsManager = usageStatsManager,
                 startTime = yesterdayStartMillis,
-                endTime = todayStartMillis,
+                endTime = yesterdaySameTimeMillis,
                 ownPackageName = context.packageName,
                 excludedPackages = launcherPackages,
                 enableDiagLog = shouldLogDiag,
-                periodLabel = "YESTERDAY",
+                periodLabel = "YESTERDAY_SAME_TIME",
             )
         } else {
             emptyMap()

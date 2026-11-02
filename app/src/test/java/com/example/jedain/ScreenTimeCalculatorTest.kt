@@ -433,4 +433,51 @@ class ScreenTimeCalculatorTest {
         )
         assertFalse("Bubble dan perhitungan waktu harus berhenti saat layar mati di tengah Live", isMonitoredAfterScreenOff)
     }
+
+    // 14. Format waktu layar singkat untuk baris kedua floating bubble ("2j 14m", "2j", "45m", "0m")
+    @Test
+    fun scenario14_formatScreenTimeShortFormattingRules() {
+        assertEquals("0m", formatScreenTimeShort(0L))
+        assertEquals("0m", formatScreenTimeShort(-1000L))
+        assertEquals("0m", formatScreenTimeShort(20_000L)) // di bawah 30s dibulatkan ke 0m
+        assertEquals("1m", formatScreenTimeShort(35_000L)) // 30s ke atas dibulatkan ke 1m jika < 1m
+        assertEquals("45m", formatScreenTimeShort(45L * 60_000L))
+        assertEquals("59m", formatScreenTimeShort(59L * 60_000L))
+        assertEquals("1j", formatScreenTimeShort(60L * 60_000L)) // Tepat 1 jam: tanpa menit
+        assertEquals("2j", formatScreenTimeShort(120L * 60_000L)) // Tepat 2 jam
+        assertEquals("2j 14m", formatScreenTimeShort((2L * 60L + 14L) * 60_000L))
+        assertEquals("3j 5m", formatScreenTimeShort((3L * 60L + 5L) * 60_000L))
+    }
+
+    // 15. Query kemarin pada jam yang sama (same time of day)
+    @Test
+    fun scenario15_yesterdaySameTimeQueryRange() {
+        val yesterdayMidnight = 10_000_000L
+        val todayMidnight = yesterdayMidnight + 86_400_000L
+        // Misal saat ini adalah pukul 10:00 pagi (10 jam setelah tengah malam)
+        val elapsed = 10L * 3600_000L
+        val now = todayMidnight + elapsed
+        val yesterdaySameTime = yesterdayMidnight + (now - todayMidnight)
+
+        val events = listOf(
+            // Sesi kemarin pagi jam 08:00 - 09:30 (90 menit sebelum jam 10:00)
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, yesterdayMidnight + 8L * 3600_000L, "MainActivity"),
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_PAUSED, yesterdayMidnight + 9L * 3600_000L + 30L * 60_000L, "MainActivity"),
+            // Sesi kemarin sore jam 14:00 - 16:00 (120 menit setelah jam 10:00)
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_RESUMED, yesterdayMidnight + 14L * 3600_000L, "MainActivity"),
+            UsageEventLite(tiktokPkg, UsageEvents.Event.ACTIVITY_PAUSED, yesterdayMidnight + 16L * 3600_000L, "MainActivity"),
+        )
+
+        // Hitung kemarin pada jam yang sama [yesterdayMidnight .. yesterdaySameTime]
+        val yesterdaySameTimeMap = computeForegroundMillis(
+            events = events,
+            startTime = yesterdayMidnight,
+            endTime = yesterdaySameTime,
+            ownPackage = ownPkg,
+            supportsScreenEvents = true,
+        )
+
+        // Hanya sesi pagi (90 menit) yang dihitung, sesi sore tidak ikut
+        assertEquals(90L * 60_000L, yesterdaySameTimeMap[tiktokPkg])
+    }
 }

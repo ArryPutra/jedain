@@ -50,6 +50,7 @@ import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.SelfImprovement
 import androidx.compose.material.icons.outlined.Spa
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -344,8 +345,8 @@ fun InterventionScreen(
                         SessionIntentPromptView(
                             appName = targetAppName,
                             choices = BreakSessionManager.DEFAULT_INTENT_CHOICES,
-                            onSelectIntent = { selectedChoice ->
-                                BreakSessionManager.confirmSessionIntent(context, selectedChoice)
+                            onConfirmSession = { selectedChoice, durationMinutes ->
+                                BreakSessionManager.confirmSessionIntent(context, selectedChoice, durationMinutes)
                                 FloatingBubbleService.triggerPendingIntentSnackbar(context)
                                 onReturnToTargetApp()
                             },
@@ -428,113 +429,433 @@ fun InterventionScreen(
 }
 
 /**
- * Layar Pertanyaan Niat saat memulai sesi pemantauan baru pada aplikasi terpantau.
+ * Layar Pertanyaan Niat dan Pilihan Durasi Countdown saat memulai sesi pemantauan baru.
  */
 @Composable
 private fun SessionIntentPromptView(
     appName: String,
     choices: List<String>,
-    onSelectIntent: (String) -> Unit,
+    onConfirmSession: (intentChoice: String, durationMinutes: Int) -> Unit,
     onCancelAndBack: () -> Unit,
 ) {
     val palette = JedaInTheme.colors
     val displayAppName = appName.trim().ifBlank { "aplikasi ini" }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Spacer(modifier = Modifier.weight(1f))
+    var selectedIntent by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCustomDurationDialog by rememberSaveable { mutableStateOf(false) }
 
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(palette.targetCard),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Spa,
-                contentDescription = null,
-                tint = palette.textPrimary,
-                modifier = Modifier.size(36.dp),
-            )
-        }
+    // Intercept back button saat berada di langkah pemilihan durasi
+    BackHandler(enabled = selectedIntent != null) {
+        selectedIntent = null
+    }
 
-        Spacer(modifier = Modifier.height(24.dp))
+    AnimatedContent(
+        targetState = selectedIntent,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+        },
+        label = "IntentAndDurationTransition",
+        modifier = Modifier.fillMaxSize(),
+    ) { currentIntent ->
+        if (currentIntent == null) {
+            // Langkah 1: Pilih Niat Penggunaan
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
 
-        Text(
-            text = "Mau apa buka $displayAppName?",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = palette.textPrimary,
-            textAlign = TextAlign.Center,
-            lineHeight = 30.sp,
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Text(
-            text = "Pilih tujuanmu sebelum memulai sesi penggunaan.",
-            fontSize = 14.sp,
-            color = palette.textSecondary,
-            textAlign = TextAlign.Center,
-            lineHeight = 20.sp,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
-
-        Spacer(modifier = Modifier.height(28.dp))
-
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            choices.forEach { choice ->
-                Surface(
-                    onClick = { onSelectIntent(choice) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = palette.surface,
-                    border = BorderStroke(1.dp, palette.border),
-                    shadowElevation = 0.dp,
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(palette.targetCard),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                        contentAlignment = Alignment.CenterStart,
+                    Icon(
+                        imageVector = Icons.Outlined.Spa,
+                        contentDescription = null,
+                        tint = palette.textPrimary,
+                        modifier = Modifier.size(36.dp),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Mau apa buka $displayAppName?",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 30.sp,
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Pilih tujuanmu sebelum memulai sesi penggunaan.",
+                    fontSize = 14.sp,
+                    color = palette.textSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    choices.forEach { choice ->
+                        Surface(
+                            onClick = { selectedIntent = choice },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            color = palette.surface,
+                            border = BorderStroke(1.dp, palette.border),
+                            shadowElevation = 0.dp,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = choice,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = palette.textPrimary,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                TextButton(
+                    onClick = onCancelAndBack,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                ) {
+                    Text(
+                        text = "Tidak jadi, kembali",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.textSecondary,
+                    )
+                }
+            }
+        } else {
+            // Langkah 2: Pilihan Durasi Countdown (Susunan 2 × 2)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(palette.targetCard),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.HourglassEmpty,
+                        contentDescription = null,
+                        tint = palette.textPrimary,
+                        modifier = Modifier.size(36.dp),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Berapa lama ingin menggunakan?",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 30.sp,
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = palette.targetCard,
+                    border = BorderStroke(1.dp, palette.border),
+                    onClick = { selectedIntent = null },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = choice,
-                            fontSize = 15.sp,
+                            text = "Niat: $currentIntent",
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
-                            color = palette.textPrimary,
+                            color = palette.textSecondary,
+                        )
+                        Text(
+                            text = "· Ubah",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.accent,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Pilih durasi countdown sebelum diingatkan untuk jeda.",
+                    fontSize = 14.sp,
+                    color = palette.textSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                // Empat kotak pilihan dengan susunan 2 × 2
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        DurationSelectionBox(
+                            text = "5 menit",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onConfirmSession(currentIntent, 5) },
+                        )
+                        DurationSelectionBox(
+                            text = "10 menit",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onConfirmSession(currentIntent, 10) },
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        DurationSelectionBox(
+                            text = "15 menit",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onConfirmSession(currentIntent, 15) },
+                        )
+                        DurationSelectionBox(
+                            text = "Atur sendiri",
+                            modifier = Modifier.weight(1f),
+                            onClick = { showCustomDurationDialog = true },
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = { selectedIntent = null },
+                        modifier = Modifier.height(48.dp),
+                    ) {
+                        Text(
+                            text = "‹ Ubah niat",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textSecondary,
+                        )
+                    }
+
+                    TextButton(
+                        onClick = onCancelAndBack,
+                        modifier = Modifier.height(48.dp),
+                    ) {
+                        Text(
+                            text = "Tidak jadi, kembali",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textSecondary,
                         )
                     }
                 }
             }
         }
+    }
 
-        Spacer(modifier = Modifier.weight(1f))
-        Spacer(modifier = Modifier.height(16.dp))
+    if (showCustomDurationDialog && selectedIntent != null) {
+        val activeIntent = selectedIntent!!
+        CustomDurationDialog(
+            onDismiss = { showCustomDurationDialog = false },
+            onConfirm = { customMinutes ->
+                showCustomDurationDialog = false
+                onConfirmSession(activeIntent, customMinutes)
+            },
+        )
+    }
+}
 
-        TextButton(
-            onClick = onCancelAndBack,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
+@Composable
+private fun DurationSelectionBox(
+    text: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val palette = JedaInTheme.colors
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(72.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = palette.surface,
+        border = BorderStroke(1.dp, palette.border),
+        shadowElevation = 0.dp,
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "Tidak jadi, kembali",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.textSecondary,
+                text = text,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+                textAlign = TextAlign.Center,
             )
         }
     }
+}
+
+@Composable
+private fun CustomDurationDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    val palette = JedaInTheme.colors
+    var inputText by rememberSaveable { mutableStateOf("") }
+    var hasError by rememberSaveable { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = palette.surface,
+        titleContentColor = palette.textPrimary,
+        textContentColor = palette.textSecondary,
+        title = {
+            Text(
+                text = "Atur Durasi Sendiri",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = palette.textPrimary,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Tentukan berapa menit kamu ingin menggunakan aplikasi (1 - 30 menit).",
+                    fontSize = 13.sp,
+                    color = palette.textSecondary,
+                    lineHeight = 18.sp,
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { newValue ->
+                        val filtered = newValue.filter { it.isDigit() }
+                        if (filtered.length <= 3) {
+                            inputText = filtered
+                            hasError = false
+                        }
+                    },
+                    singleLine = true,
+                    placeholder = {
+                        Text("Contoh: 10", color = palette.textSecondary.copy(alpha = 0.5f))
+                    },
+                    suffix = {
+                        Text("menit", fontSize = 14.sp, color = palette.textSecondary)
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = hasError,
+                    supportingText = if (hasError) {
+                        {
+                            Text(
+                                text = "Masukkan durasi antara 1 sampai 30 menit",
+                                fontSize = 12.sp,
+                                color = palette.durationRed,
+                            )
+                        }
+                    } else null,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border,
+                        focusedTextColor = palette.textPrimary,
+                        unfocusedTextColor = palette.textPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "Batal",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val minutes = inputText.toIntOrNull()
+                    if (minutes != null && minutes in 1..30) {
+                        onConfirm(minutes)
+                    } else {
+                        hasError = true
+                    }
+                },
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = palette.accent,
+                    contentColor = palette.surface,
+                ),
+            ) {
+                Text(
+                    text = "Mulai",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        },
+    )
 }
 
 /**
