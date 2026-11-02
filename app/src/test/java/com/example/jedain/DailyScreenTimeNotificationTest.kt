@@ -9,43 +9,39 @@ class DailyScreenTimeNotificationTest {
 
     @Test
     fun testFormatDailyScreenTimeNotification_zeroAndNegative_returnsZeroMinutes() {
-        assertEquals("0 menit", formatDailyScreenTimeNotification(0L))
-        assertEquals("0 menit", formatDailyScreenTimeNotification(-1_000L))
-        assertEquals("0 menit", formatDailyScreenTimeNotification(-60_000L))
+        assertEquals("0m", formatDailyScreenTimeNotification(0L))
+        assertEquals("0m", formatDailyScreenTimeNotification(-1_000L))
+        assertEquals("0m", formatDailyScreenTimeNotification(-60_000L))
     }
 
     @Test
     fun testFormatDailyScreenTimeNotification_underOneMinute_returnsZeroMinutes() {
-        // Kurang dari 1 menit (misal 15 detik, 30 detik, 59 detik) dibulatkan ke 0 menit
-        assertEquals("0 menit", formatDailyScreenTimeNotification(15_000L))
-        assertEquals("0 menit", formatDailyScreenTimeNotification(30_000L))
-        assertEquals("0 menit", formatDailyScreenTimeNotification(59_999L))
+        assertEquals("0m", formatDailyScreenTimeNotification(15_000L))
+        assertEquals("1m", formatDailyScreenTimeNotification(30_000L))
+        assertEquals("1m", formatDailyScreenTimeNotification(59_999L))
     }
 
     @Test
     fun testFormatDailyScreenTimeNotification_underOneHour_returnsMinutesOnly() {
-        // Kurang dari 1 jam: "42 menit", "1 menit", "59 menit"
-        assertEquals("1 menit", formatDailyScreenTimeNotification(60_000L))
-        assertEquals("15 menit", formatDailyScreenTimeNotification(15L * 60_000L))
-        assertEquals("42 menit", formatDailyScreenTimeNotification(42L * 60_000L))
-        assertEquals("59 menit", formatDailyScreenTimeNotification(59L * 60_000L))
+        assertEquals("1m", formatDailyScreenTimeNotification(60_000L))
+        assertEquals("15m", formatDailyScreenTimeNotification(15L * 60_000L))
+        assertEquals("42m", formatDailyScreenTimeNotification(42L * 60_000L))
+        assertEquals("59m", formatDailyScreenTimeNotification(59L * 60_000L))
     }
 
     @Test
     fun testFormatDailyScreenTimeNotification_exactHours_returnsHoursOnly() {
-        // Tepat satu jam atau jam bulat: "1 jam", "2 jam", "5 jam"
-        assertEquals("1 jam", formatDailyScreenTimeNotification(60L * 60_000L))
-        assertEquals("2 jam", formatDailyScreenTimeNotification(120L * 60_000L))
-        assertEquals("3 jam", formatDailyScreenTimeNotification(180L * 60_000L))
-        assertEquals("5 jam", formatDailyScreenTimeNotification(300L * 60_000L))
+        assertEquals("1j", formatDailyScreenTimeNotification(60L * 60_000L))
+        assertEquals("2j", formatDailyScreenTimeNotification(120L * 60_000L))
+        assertEquals("3j", formatDailyScreenTimeNotification(180L * 60_000L))
+        assertEquals("5j", formatDailyScreenTimeNotification(300L * 60_000L))
     }
 
     @Test
     fun testFormatDailyScreenTimeNotification_hoursAndMinutes_returnsCombinedFormat() {
-        // 1 jam atau lebih dengan menit: "3 jam 42 menit", "1 jam 1 menit"
-        assertEquals("1 jam 1 menit", formatDailyScreenTimeNotification(61L * 60_000L))
-        assertEquals("3 jam 42 menit", formatDailyScreenTimeNotification((3L * 60L + 42L) * 60_000L))
-        assertEquals("7 jam 15 menit", formatDailyScreenTimeNotification((7L * 60L + 15L) * 60_000L))
+        assertEquals("1j 1m", formatDailyScreenTimeNotification(61L * 60_000L))
+        assertEquals("3j 42m", formatDailyScreenTimeNotification((3L * 60L + 42L) * 60_000L))
+        assertEquals("7j 15m", formatDailyScreenTimeNotification((7L * 60L + 15L) * 60_000L))
     }
 
     @Test
@@ -95,7 +91,7 @@ class DailyScreenTimeNotificationTest {
         // Total akumulasi seluruh aplikasi di perangkat hari ini: 10 + 25 + 15 + 50 = 100 menit = 1 jam 40 menit
         val totalDeviceMillis = resultMap.values.sum()
         assertEquals(100L * 60_000L, totalDeviceMillis)
-        assertEquals("1 jam 40 menit", formatDailyScreenTimeNotification(totalDeviceMillis))
+        assertEquals("1j 40m", formatDailyScreenTimeNotification(totalDeviceMillis))
     }
 
     @Test
@@ -140,7 +136,7 @@ class DailyScreenTimeNotificationTest {
         // Total screen time hari ini: 20 + 15 = 35 menit
         val totalTodayMillis = resultMap.values.sum()
         assertEquals(35L * 60_000L, totalTodayMillis)
-        assertEquals("35 menit", formatDailyScreenTimeNotification(totalTodayMillis))
+        assertEquals("35m", formatDailyScreenTimeNotification(totalTodayMillis))
     }
 
     @Test
@@ -148,13 +144,14 @@ class DailyScreenTimeNotificationTest {
         val totalMillis = (3L * 60L + 42L) * 60_000L
         val formattedDuration = formatDailyScreenTimeNotification(totalMillis)
 
-        assertEquals("3 jam 42 menit", formattedDuration)
+        assertEquals("3j 42m", formattedDuration)
 
-        val collapsedText = "⏱ Total waktu layar hari ini: $formattedDuration"
-        assertEquals("⏱ Total waktu layar hari ini: 3 jam 42 menit", collapsedText)
+        val collapsedText = FloatingBubbleService.buildScreenTimeNotificationContentText(formattedDuration)
+        assertEquals("Waktu layar aplikasi dipantau: 3j 42m", collapsedText)
 
-        val bigText = "⏱ Total waktu layar hari ini\n$formattedDuration"
-        assertEquals("⏱ Total waktu layar hari ini\n3 jam 42 menit", bigText)
+        val bigText = FloatingBubbleService.buildScreenTimeNotificationBigText(formattedDuration)
+        assertEquals("Waktu layar aplikasi dipantau\n3j 42m", bigText)
+        assertFalse(bigText.contains("Total waktu layar hari ini"))
         assertFalse(bigText.contains("Pemantauan aktif"))
         assertFalse(bigText.contains("JedaIn membantu kamu lebih sadar"))
     }

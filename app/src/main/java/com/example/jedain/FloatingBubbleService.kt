@@ -586,6 +586,7 @@ class FloatingBubbleService : Service() {
                         if (!wasMonitored) {
                             BreakSessionManager.onMonitoredAppEntered(this@FloatingBubbleService)
                             refreshScreenTimeBase()
+                            refreshNotificationScreenTime()
                         }
 
                         val expired = BreakSessionManager.tick(this@FloatingBubbleService)
@@ -619,6 +620,7 @@ class FloatingBubbleService : Service() {
                 } else {
                     if (wasMonitored) {
                         BreakSessionManager.onMonitoredAppExited(this@FloatingBubbleService)
+                        refreshNotificationScreenTime()
                     }
                     setBubbleVisibility(false)
                     FloatingSnackbarManager.hideImmediate()
@@ -972,10 +974,10 @@ class FloatingBubbleService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Bubble Waktu Layar JedaIn",
+            "Waktu Layar Aplikasi Dipantau",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Menampilkan status pemantauan waktu layar aplikasi JedaIn"
+            description = "Menampilkan status pemantauan waktu layar aplikasi yang dipantau"
             setShowBadge(false)
             setSound(null, null)
             enableVibration(false)
@@ -984,7 +986,7 @@ class FloatingBubbleService : Service() {
         manager?.createNotificationChannel(channel)
     }
 
-    private fun buildForegroundNotification(dailyScreenTimeMillis: Long = 0L): Notification {
+    private fun buildForegroundNotification(dailyScreenTimeMillis: Long = baseTodayMillis): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -1005,8 +1007,8 @@ class FloatingBubbleService : Service() {
         )
 
         val formattedDuration = formatDailyScreenTimeNotification(dailyScreenTimeMillis)
-        val contentText = "⏱ Total waktu layar hari ini: $formattedDuration"
-        val bigText = "⏱ Total waktu layar hari ini\n$formattedDuration"
+        val contentText = buildScreenTimeNotificationContentText(formattedDuration)
+        val bigText = buildScreenTimeNotificationBigText(formattedDuration)
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_jedain)
@@ -1035,9 +1037,17 @@ class FloatingBubbleService : Service() {
 
     private fun refreshNotificationScreenTime() {
         serviceScope.launch(Dispatchers.IO) {
-            val totalMillis = repository.getTotalDeviceScreenTimeMillis()
+            val summary = repository.getMonitoredScreenTimeSummary()
             withContext(Dispatchers.Main) {
-                updateForegroundNotification(totalMillis)
+                baseTodayMillis = summary.todayTotalMillis
+                baseElapsedRealtime = SystemClock.elapsedRealtime()
+                val activeDelta = if (isMonitoredAppForegroundNow && baseElapsedRealtime > 0L) {
+                    (SystemClock.elapsedRealtime() - baseElapsedRealtime).coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+                val currentTotalMillis = baseTodayMillis + activeDelta
+                updateForegroundNotification(currentTotalMillis)
                 DailyAwarenessWidgetProvider.updateAllWidgets(this@FloatingBubbleService)
             }
         }
@@ -1049,6 +1059,14 @@ class FloatingBubbleService : Service() {
         const val ACTION_HIDE_BUBBLE = "com.example.jedain.ACTION_HIDE_BUBBLE"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "jedain_floating_bubble_channel"
+
+        fun buildScreenTimeNotificationContentText(durationText: String): String {
+            return "Waktu layar aplikasi dipantau: $durationText"
+        }
+
+        fun buildScreenTimeNotificationBigText(durationText: String): String {
+            return "Waktu layar aplikasi dipantau\n$durationText"
+        }
 
         const val BORDER_NEUTRAL_LIGHT = 0xFFBDBDBD.toInt()
         const val BORDER_NEUTRAL_DARK = 0xFF4A4A4A.toInt()

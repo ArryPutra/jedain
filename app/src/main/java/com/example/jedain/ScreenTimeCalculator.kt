@@ -455,25 +455,14 @@ fun formatScreenTimeShort(millis: Long): String {
 
 /**
  * Format total waktu penggunaan layar hari ini untuk persistent silent notification JedaIn.
- * Aturan format:
- * - Kurang dari 1 jam: "42 menit"
- * - 1 jam atau lebih: "3 jam 42 menit"
- * - Jika tepat satu jam: "1 jam"
- * - Jika belum ada penggunaan: "0 menit"
+ * Disesuaikan agar sama seperti kartu "Waktu layar aplikasi dipantau" di Beranda:
+ * - Kurang dari 1 jam: "45m", "1m"
+ * - Tepat jam bulat: "1j", "2j"
+ * - 1 jam atau lebih dengan menit: "2j 14m", "3j 42m"
+ * - Jika 0 atau belum ada penggunaan: "0m"
  */
 fun formatDailyScreenTimeNotification(millis: Long): String {
-    if (millis <= 0L) return "0 menit"
-    val totalMinutes = millis / 60_000L
-    if (totalMinutes <= 0L) return "0 menit"
-
-    val hours = totalMinutes / 60L
-    val minutes = totalMinutes % 60L
-
-    return when {
-        hours == 0L -> "$minutes menit"
-        minutes == 0L -> "$hours jam"
-        else -> "$hours jam $minutes menit"
-    }
+    return formatScreenTimeShort(millis)
 }
 
 fun formatScreenTimeComparison(
