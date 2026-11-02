@@ -43,6 +43,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -438,8 +439,38 @@ private fun SessionIntentPromptView(
     onConfirmSession: (intentChoice: String, durationMinutes: Int) -> Unit,
     onCancelAndBack: () -> Unit,
 ) {
+    val context = LocalContext.current
     val palette = JedaInTheme.colors
     val displayAppName = appName.trim().ifBlank { "aplikasi ini" }
+
+    val targetSettings = remember(context) { TargetSettingsPreferences(context).loadSettings() }
+    val defaultTargetMinutes = targetSettings.sessionDurationMinutes
+
+    var selectedOptionName by rememberSaveable {
+        mutableStateOf(
+            when (defaultTargetMinutes) {
+                5 -> DurationCardOption.FIVE.name
+                10 -> DurationCardOption.TEN.name
+                15 -> DurationCardOption.FIFTEEN.name
+                else -> DurationCardOption.CUSTOM.name
+            }
+        )
+    }
+    val selectedOption = DurationCardOption.valueOf(selectedOptionName)
+
+    var customMinutes by rememberSaveable {
+        mutableIntStateOf(
+            if (defaultTargetMinutes !in listOf(5, 10, 15)) {
+                defaultTargetMinutes
+            } else {
+                targetSettings.customSessionDurationMinutes
+            }
+        )
+    }
+
+    var hasCustomDurationSet by rememberSaveable {
+        mutableStateOf(defaultTargetMinutes !in listOf(5, 10, 15))
+    }
 
     var selectedIntent by rememberSaveable { mutableStateOf<String?>(null) }
     var showCustomDurationDialog by rememberSaveable { mutableStateOf(false) }
@@ -556,6 +587,15 @@ private fun SessionIntentPromptView(
             }
         } else {
             // Langkah 2: Pilihan Durasi Countdown (Susunan 2 × 2)
+            var isStartingSession by remember(currentIntent) { mutableStateOf(false) }
+
+            val activeDurationMinutes = when (selectedOption) {
+                DurationCardOption.FIVE -> 5
+                DurationCardOption.TEN -> 10
+                DurationCardOption.FIFTEEN -> 15
+                DurationCardOption.CUSTOM -> customMinutes
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -641,32 +681,77 @@ private fun SessionIntentPromptView(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        DurationSelectionBox(
-                            text = "5 menit",
+                        DurationSelectionCard(
+                            title = "5 menit",
+                            subtitle = null,
+                            isSelected = selectedOption == DurationCardOption.FIVE,
+                            isTargetDefault = defaultTargetMinutes == 5,
                             modifier = Modifier.weight(1f),
-                            onClick = { onConfirmSession(currentIntent, 5) },
+                            onClick = { selectedOptionName = DurationCardOption.FIVE.name },
                         )
-                        DurationSelectionBox(
-                            text = "10 menit",
+                        DurationSelectionCard(
+                            title = "10 menit",
+                            subtitle = null,
+                            isSelected = selectedOption == DurationCardOption.TEN,
+                            isTargetDefault = defaultTargetMinutes == 10,
                             modifier = Modifier.weight(1f),
-                            onClick = { onConfirmSession(currentIntent, 10) },
+                            onClick = { selectedOptionName = DurationCardOption.TEN.name },
                         )
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        DurationSelectionBox(
-                            text = "15 menit",
+                        DurationSelectionCard(
+                            title = "15 menit",
+                            subtitle = null,
+                            isSelected = selectedOption == DurationCardOption.FIFTEEN,
+                            isTargetDefault = defaultTargetMinutes == 15,
                             modifier = Modifier.weight(1f),
-                            onClick = { onConfirmSession(currentIntent, 15) },
+                            onClick = { selectedOptionName = DurationCardOption.FIFTEEN.name },
                         )
-                        DurationSelectionBox(
-                            text = "Atur sendiri",
+                        DurationSelectionCard(
+                            title = "Atur sendiri",
+                            subtitle = if (hasCustomDurationSet || selectedOption == DurationCardOption.CUSTOM) "$customMinutes menit" else null,
+                            isSelected = selectedOption == DurationCardOption.CUSTOM,
+                            isTargetDefault = defaultTargetMinutes !in listOf(5, 10, 15) && customMinutes == defaultTargetMinutes,
                             modifier = Modifier.weight(1f),
                             onClick = { showCustomDurationDialog = true },
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Tombol utama mulai sesi countdown
+                Button(
+                    onClick = {
+                        if (!isStartingSession) {
+                            isStartingSession = true
+                            val validMinutes = activeDurationMinutes.coerceIn(
+                                TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES,
+                                TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES,
+                            )
+                            onConfirmSession(currentIntent, validMinutes)
+                        }
+                    },
+                    enabled = !isStartingSession,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = palette.accent,
+                        contentColor = palette.surface,
+                        disabledContainerColor = palette.accent.copy(alpha = 0.6f),
+                        disabledContentColor = palette.surface.copy(alpha = 0.6f),
+                    ),
+                ) {
+                    Text(
+                        text = "Mulai sesi ($activeDurationMinutes menit)",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
@@ -706,54 +791,122 @@ private fun SessionIntentPromptView(
     }
 
     if (showCustomDurationDialog && selectedIntent != null) {
-        val activeIntent = selectedIntent!!
         CustomDurationDialog(
+            initialMinutes = customMinutes,
             onDismiss = { showCustomDurationDialog = false },
-            onConfirm = { customMinutes ->
+            onConfirm = { minutes ->
+                customMinutes = minutes
+                hasCustomDurationSet = true
+                selectedOptionName = DurationCardOption.CUSTOM.name
                 showCustomDurationDialog = false
-                onConfirmSession(activeIntent, customMinutes)
             },
         )
     }
 }
 
+private enum class DurationCardOption {
+    FIVE,
+    TEN,
+    FIFTEEN,
+    CUSTOM,
+}
+
 @Composable
-private fun DurationSelectionBox(
-    text: String,
-    modifier: Modifier = Modifier,
+private fun DurationSelectionCard(
+    title: String,
+    isSelected: Boolean,
+    isTargetDefault: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
 ) {
     val palette = JedaInTheme.colors
+    val borderColor = if (isSelected) palette.accent else palette.border
+    val borderWidth = if (isSelected) 1.5.dp else 1.dp
+    val backgroundColor = if (isSelected) palette.targetCard else palette.surface
+
     Surface(
         onClick = onClick,
-        modifier = modifier.height(72.dp),
+        modifier = modifier.height(84.dp),
         shape = RoundedCornerShape(16.dp),
-        color = palette.surface,
-        border = BorderStroke(1.dp, palette.border),
+        color = backgroundColor,
+        border = BorderStroke(borderWidth, borderColor),
         shadowElevation = 0.dp,
     ) {
         Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
         ) {
-            Text(
-                text = text,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
-                textAlign = TextAlign.Center,
-            )
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Terpilih",
+                        tint = palette.surface,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 15.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                    color = palette.textPrimary,
+                    textAlign = TextAlign.Center,
+                )
+
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isSelected) palette.textPrimary else palette.textSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+
+                if (isSelected && isTargetDefault) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Sesuai target",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.accent,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun CustomDurationDialog(
+    initialMinutes: Int?,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit,
 ) {
     val palette = JedaInTheme.colors
-    var inputText by rememberSaveable { mutableStateOf("") }
+    var inputText by rememberSaveable {
+        mutableStateOf(if (initialMinutes != null && initialMinutes > 0) initialMinutes.toString() else "")
+    }
     var hasError by rememberSaveable { mutableStateOf(false) }
 
     AlertDialog(
@@ -776,7 +929,7 @@ private fun CustomDurationDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Tentukan berapa menit kamu ingin menggunakan aplikasi (1 - 30 menit).",
+                    text = "Tentukan berapa menit kamu ingin menggunakan aplikasi (${TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES} - ${TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES} menit).",
                     fontSize = 13.sp,
                     color = palette.textSecondary,
                     lineHeight = 18.sp,
@@ -795,7 +948,7 @@ private fun CustomDurationDialog(
                     },
                     singleLine = true,
                     placeholder = {
-                        Text("Contoh: 10", color = palette.textSecondary.copy(alpha = 0.5f))
+                        Text("Contoh: 20", color = palette.textSecondary.copy(alpha = 0.5f))
                     },
                     suffix = {
                         Text("menit", fontSize = 14.sp, color = palette.textSecondary)
@@ -805,7 +958,7 @@ private fun CustomDurationDialog(
                     supportingText = if (hasError) {
                         {
                             Text(
-                                text = "Masukkan durasi antara 1 sampai 30 menit",
+                                text = "Masukkan durasi antara ${TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES} sampai ${TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES} menit",
                                 fontSize = 12.sp,
                                 color = palette.durationRed,
                             )
@@ -817,6 +970,7 @@ private fun CustomDurationDialog(
                         unfocusedBorderColor = palette.border,
                         focusedTextColor = palette.textPrimary,
                         unfocusedTextColor = palette.textPrimary,
+                        errorBorderColor = palette.durationRed,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -836,7 +990,7 @@ private fun CustomDurationDialog(
             Button(
                 onClick = {
                     val minutes = inputText.toIntOrNull()
-                    if (minutes != null && minutes in 1..30) {
+                    if (minutes != null && minutes in TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES..TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES) {
                         onConfirm(minutes)
                     } else {
                         hasError = true
@@ -849,7 +1003,7 @@ private fun CustomDurationDialog(
                 ),
             ) {
                 Text(
-                    text = "Mulai",
+                    text = "Simpan",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                 )

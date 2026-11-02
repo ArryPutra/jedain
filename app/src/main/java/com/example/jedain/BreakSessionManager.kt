@@ -471,7 +471,10 @@ object BreakSessionManager {
         ensureInitialized(context)
         lastMonotonicTime = SystemClock.elapsedRealtime()
         val sessionMillis = if (durationMinutes != null && durationMinutes > 0) {
-            durationMinutes.coerceIn(1, 30) * 60L * 1000L
+            durationMinutes.coerceIn(
+                TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES,
+                TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES,
+            ) * 60L * 1000L
         } else {
             val configuredMinutes = getConfiguredSessionMinutes(context)
             configuredMinutes * 60L * 1000L

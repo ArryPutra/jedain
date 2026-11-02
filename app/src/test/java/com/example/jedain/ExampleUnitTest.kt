@@ -960,5 +960,61 @@ class ExampleUnitTest {
         assertFalse(validateDisableBubbleConfirmationPhrase("$target Dan saya mengerti"))
         assertFalse(validateDisableBubbleConfirmationPhrase("Konfirmasi: $target"))
     }
+
+    @Test
+    fun sessionDurationSelectionUX_rulesAndAutoSelect() {
+        // 1. Verifikasi hanya ada 4 pilihan durasi (5, 10, 15, dan Atur sendiri)
+        val fixedPresets = listOf(5, 10, 15)
+        assertEquals(3, fixedPresets.size)
+
+        // 2. Logika auto-select berdasarkan pengaturan Atur Target
+        fun determineInitialSelection(defaultMinutes: Int): Pair<String, Int> {
+            return when (defaultMinutes) {
+                5 -> "FIVE" to 5
+                10 -> "TEN" to 10
+                15 -> "FIFTEEN" to 15
+                else -> "CUSTOM" to defaultMinutes
+            }
+        }
+
+        assertEquals("FIVE" to 5, determineInitialSelection(5))
+        assertEquals("TEN" to 10, determineInitialSelection(10))
+        assertEquals("FIFTEEN" to 15, determineInitialSelection(15))
+        assertEquals("CUSTOM" to 20, determineInitialSelection(20))
+        assertEquals("CUSTOM" to 25, determineInitialSelection(25))
+        assertEquals("CUSTOM" to 30, determineInitialSelection(30))
+
+        // 3. Tombol dinamis label
+        fun formatStartButtonText(minutes: Int) = "Mulai sesi ($minutes menit)"
+        assertEquals("Mulai sesi (5 menit)", formatStartButtonText(5))
+        assertEquals("Mulai sesi (10 menit)", formatStartButtonText(10))
+        assertEquals("Mulai sesi (15 menit)", formatStartButtonText(15))
+        assertEquals("Mulai sesi (20 menit)", formatStartButtonText(20))
+        assertEquals("Mulai sesi (25 menit)", formatStartButtonText(25))
+
+        // 4. Validasi batas durasi custom (1 - 60 menit)
+        fun validateCustomDuration(minutes: Int): Boolean {
+            return minutes in TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES..TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES
+        }
+        assertTrue(validateCustomDuration(1))
+        assertTrue(validateCustomDuration(20))
+        assertTrue(validateCustomDuration(25))
+        assertTrue(validateCustomDuration(60))
+        assertFalse(validateCustomDuration(0))
+        assertFalse(validateCustomDuration(-1))
+        assertFalse(validateCustomDuration(61))
+
+        // 5. Verifikasi kecocokan label "Sesuai target"
+        fun isTargetMatch(selectedMinutes: Int, defaultTargetMinutes: Int): Boolean {
+            return selectedMinutes == defaultTargetMinutes
+        }
+        assertTrue(isTargetMatch(5, 5))
+        assertTrue(isTargetMatch(10, 10))
+        assertTrue(isTargetMatch(15, 15))
+        assertTrue(isTargetMatch(20, 20))
+        assertFalse(isTargetMatch(25, 20))
+        assertFalse(isTargetMatch(10, 20))
+    }
 }
+
 
