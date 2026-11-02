@@ -1,11 +1,13 @@
 package com.example.jedain
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import androidx.core.content.edit
 
 val PresetDailyTargetMinutes = listOf(30, 60, 120, 180)
 val PresetSessionDurationMinutes = listOf(5, 10, 15, 20, 30)
+val PresetAutoResetDurationMinutes = listOf(15, 30, 45, 60)
 
 fun validateDailyTargetMinutes(minutes: Int): Int {
     val clamped = minutes.coerceIn(
@@ -24,6 +26,13 @@ fun validateSessionDurationMinutes(minutes: Int): Int {
     return minutes.coerceIn(
         TargetSettingsPreferences.MIN_SESSION_DURATION_MINUTES,
         TargetSettingsPreferences.MAX_SESSION_DURATION_MINUTES,
+    )
+}
+
+fun validateAutoResetDurationMinutes(minutes: Int): Int {
+    return minutes.coerceIn(
+        TargetSettingsPreferences.MIN_AUTO_RESET_DURATION_MINUTES,
+        TargetSettingsPreferences.MAX_AUTO_RESET_DURATION_MINUTES,
     )
 }
 
@@ -55,6 +64,13 @@ data class TargetSettingsState(
         TargetSettingsPreferences.DEFAULT_CUSTOM_SESSION_MINUTES
     },
     val reminderOnSessionEnd: Boolean = TargetSettingsPreferences.DEFAULT_REMINDER_ENABLED,
+    val autoResetDurationMinutes: Int = TargetSettingsPreferences.DEFAULT_AUTO_RESET_MINUTES,
+    val isCustomAutoResetDuration: Boolean = autoResetDurationMinutes !in PresetAutoResetDurationMinutes,
+    val customAutoResetDurationMinutes: Int = if (autoResetDurationMinutes !in PresetAutoResetDurationMinutes) {
+        validateAutoResetDurationMinutes(autoResetDurationMinutes)
+    } else {
+        TargetSettingsPreferences.DEFAULT_CUSTOM_AUTO_RESET_MINUTES
+    },
 ) {
     val validatedDailyTargetMinutes: Int
         get() = validateDailyTargetMinutes(dailyTargetMinutes)
@@ -70,10 +86,19 @@ data class TargetSettingsState(
 
     val validatedCustomSessionDurationMinutes: Int
         get() = validateSessionDurationMinutes(customSessionDurationMinutes)
+
+    val validatedAutoResetDurationMinutes: Int
+        get() = validateAutoResetDurationMinutes(autoResetDurationMinutes)
+
+    val validatedCustomAutoResetDurationMinutes: Int
+        get() = validateAutoResetDurationMinutes(customAutoResetDurationMinutes)
 }
 
-class TargetSettingsPreferences(context: Context) {
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class TargetSettingsPreferences(
+    context: Context? = null,
+    prefsOverride: SharedPreferences? = null,
+) {
+    private val prefs = prefsOverride ?: context!!.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun loadSettings(): TargetSettingsState {
         val rawMinutes = if (prefs.contains(KEY_DAILY_TARGET_MINUTES)) {
@@ -121,6 +146,27 @@ class TargetSettingsPreferences(context: Context) {
             validatedSessionMinutes
         }
 
+        val rawAutoResetMinutes = prefs.getInt(KEY_AUTO_RESET_DURATION_MINUTES, DEFAULT_AUTO_RESET_MINUTES)
+        val validatedAutoResetMinutes = validateAutoResetDurationMinutes(rawAutoResetMinutes)
+
+        val isCustomAutoReset = if (prefs.contains(KEY_IS_CUSTOM_AUTO_RESET_DURATION)) {
+            prefs.getBoolean(KEY_IS_CUSTOM_AUTO_RESET_DURATION, false)
+        } else {
+            validatedAutoResetMinutes !in PresetAutoResetDurationMinutes
+        }
+
+        val rawCustomAutoResetMinutes = prefs.getInt(
+            KEY_CUSTOM_AUTO_RESET_DURATION_MINUTES,
+            if (isCustomAutoReset) validatedAutoResetMinutes else DEFAULT_CUSTOM_AUTO_RESET_MINUTES,
+        )
+        val validatedCustomAutoResetMinutes = validateAutoResetDurationMinutes(rawCustomAutoResetMinutes)
+
+        val activeAutoResetDurationMinutes = if (isCustomAutoReset) {
+            validatedCustomAutoResetMinutes
+        } else {
+            validatedAutoResetMinutes
+        }
+
         return TargetSettingsState(
             dailyTargetMinutes = validatedMinutes,
             isCustomDailyTarget = isCustom,
@@ -129,6 +175,9 @@ class TargetSettingsPreferences(context: Context) {
             isCustomSessionDuration = isCustomSession,
             customSessionDurationMinutes = validatedCustomSessionMinutes,
             reminderOnSessionEnd = prefs.getBoolean(KEY_REMINDER_ON_SESSION_END, DEFAULT_REMINDER_ENABLED),
+            autoResetDurationMinutes = activeAutoResetDurationMinutes,
+            isCustomAutoResetDuration = isCustomAutoReset,
+            customAutoResetDurationMinutes = validatedCustomAutoResetMinutes,
         )
     }
 
@@ -145,6 +194,12 @@ class TargetSettingsPreferences(context: Context) {
         } else {
             settings.validatedCustomSessionDurationMinutes
         }
+        val validatedAutoResetMinutes = settings.validatedAutoResetDurationMinutes
+        val validatedCustomAutoResetMinutes = if (settings.isCustomAutoResetDuration) {
+            validatedAutoResetMinutes
+        } else {
+            settings.validatedCustomAutoResetDurationMinutes
+        }
 
         prefs.edit {
             putInt(KEY_DAILY_TARGET_MINUTES, validatedMinutes)
@@ -155,6 +210,9 @@ class TargetSettingsPreferences(context: Context) {
             putBoolean(KEY_IS_CUSTOM_SESSION_DURATION, settings.isCustomSessionDuration)
             putInt(KEY_CUSTOM_SESSION_DURATION_MINUTES, validatedCustomSessionMinutes)
             putBoolean(KEY_REMINDER_ON_SESSION_END, settings.reminderOnSessionEnd)
+            putInt(KEY_AUTO_RESET_DURATION_MINUTES, validatedAutoResetMinutes)
+            putBoolean(KEY_IS_CUSTOM_AUTO_RESET_DURATION, settings.isCustomAutoResetDuration)
+            putInt(KEY_CUSTOM_AUTO_RESET_DURATION_MINUTES, validatedCustomAutoResetMinutes)
         }
     }
 
@@ -168,6 +226,9 @@ class TargetSettingsPreferences(context: Context) {
         private const val KEY_IS_CUSTOM_SESSION_DURATION = "is_custom_session_duration"
         private const val KEY_CUSTOM_SESSION_DURATION_MINUTES = "custom_session_duration_minutes"
         private const val KEY_REMINDER_ON_SESSION_END = "reminder_on_session_end"
+        private const val KEY_AUTO_RESET_DURATION_MINUTES = "auto_reset_duration_minutes"
+        private const val KEY_IS_CUSTOM_AUTO_RESET_DURATION = "is_custom_auto_reset_duration"
+        private const val KEY_CUSTOM_AUTO_RESET_DURATION_MINUTES = "custom_auto_reset_duration_minutes"
 
         const val MIN_DAILY_TARGET_MINUTES = 15
         const val MAX_DAILY_TARGET_MINUTES = 240
@@ -180,5 +241,10 @@ class TargetSettingsPreferences(context: Context) {
         const val MIN_SESSION_DURATION_MINUTES = 1
         const val MAX_SESSION_DURATION_MINUTES = 60
         const val DEFAULT_REMINDER_ENABLED = true
+
+        const val DEFAULT_AUTO_RESET_MINUTES = 30
+        const val DEFAULT_CUSTOM_AUTO_RESET_MINUTES = 30
+        const val MIN_AUTO_RESET_DURATION_MINUTES = 1
+        const val MAX_AUTO_RESET_DURATION_MINUTES = 120
     }
 }

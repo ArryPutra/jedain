@@ -621,6 +621,8 @@ class FloatingBubbleService : Service() {
                     if (wasMonitored) {
                         BreakSessionManager.onMonitoredAppExited(this@FloatingBubbleService)
                         refreshNotificationScreenTime()
+                    } else if (BreakSessionManager.isMonitoredAppActive(this@FloatingBubbleService)) {
+                        BreakSessionManager.setMonitoredAppActive(this@FloatingBubbleService, false)
                     }
                     setBubbleVisibility(false)
                     FloatingSnackbarManager.hideImmediate()
@@ -884,6 +886,12 @@ class FloatingBubbleService : Service() {
                     }
                     Intent.ACTION_SCREEN_OFF -> {
                         Log.d(TAG, "ACTION_SCREEN_OFF received, stopping update loop")
+                        if (isMonitoredAppForegroundNow) {
+                            BreakSessionManager.onMonitoredAppExited(this@FloatingBubbleService)
+                            isMonitoredAppForegroundNow = false
+                        } else if (BreakSessionManager.isMonitoredAppActive(this@FloatingBubbleService)) {
+                            BreakSessionManager.setMonitoredAppActive(this@FloatingBubbleService, false)
+                        }
                         foregroundTracker.onScreenOff()
                         setBubbleVisibility(false)
                         FloatingSnackbarManager.hideImmediate()
@@ -926,6 +934,12 @@ class FloatingBubbleService : Service() {
         serviceScope.launch(Dispatchers.Main) {
             isAppInForeground = inForeground
             if (inForeground) {
+                if (isMonitoredAppForegroundNow) {
+                    BreakSessionManager.onMonitoredAppExited(this@FloatingBubbleService)
+                    isMonitoredAppForegroundNow = false
+                } else if (BreakSessionManager.isMonitoredAppActive(this@FloatingBubbleService)) {
+                    BreakSessionManager.setMonitoredAppActive(this@FloatingBubbleService, false)
+                }
                 setBubbleVisibility(false)
             } else {
                 val isMonitored = checkIsMonitoredAppInForeground()

@@ -1450,8 +1450,11 @@ fun SessionStatusCard(
     val isResting = remember(tickTrigger) {
         BreakSessionManager.isResting(context) && BreakSessionManager.getRemainingRestMillis(context) > 0L
     }
-    val isSessionActive = remember(tickTrigger, isResting) {
-        !isResting && BreakSessionManager.isSessionActive(context)
+    val wasRecentlyAutoReset = remember(tickTrigger) {
+        BreakSessionManager.wasRecentlyAutoReset(context)
+    }
+    val isSessionActive = remember(tickTrigger, isResting, wasRecentlyAutoReset) {
+        !isResting && (BreakSessionManager.isSessionActive(context) || wasRecentlyAutoReset)
     }
 
     val remainingRestMillis = remember(tickTrigger, isResting) {
@@ -1464,6 +1467,18 @@ fun SessionStatusCard(
 
     val totalSessionMillis = remember(tickTrigger, isSessionActive) {
         if (isSessionActive) BreakSessionManager.getTotalSessionMillis(context) else 0L
+    }
+
+    val isMonitoredAppActive = remember(tickTrigger) {
+        BreakSessionManager.isMonitoredAppActive(context)
+    }
+
+    val remainingResetMillis = remember(tickTrigger, isSessionActive, isMonitoredAppActive) {
+        if (isSessionActive && !isMonitoredAppActive) {
+            BreakSessionManager.getAutoResetRemainingMillis(context)
+        } else {
+            0L
+        }
     }
 
     val usedMillis = (totalSessionMillis - remainingSessionMillis).coerceAtLeast(0L)
@@ -1565,20 +1580,99 @@ fun SessionStatusCard(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        Column {
+                            Text(
+                                text = "Sisa sesi pantau",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textSecondary,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = formatTimerMmSs(remainingSessionMillis),
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.textPrimary,
+                                letterSpacing = (-0.5).sp,
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = colors.background,
+                            border = BorderStroke(1.dp, colors.border.copy(alpha = 0.6f)),
+                            modifier = Modifier.padding(bottom = 2.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.End,
+                            ) {
+                                when {
+                                    wasRecentlyAutoReset -> {
+                                        Text(
+                                            text = "Reset otomatis",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colors.textSecondary,
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Sesi telah direset",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.accent,
+                                        )
+                                    }
+                                    isMonitoredAppActive -> {
+                                        Text(
+                                            text = "Reset otomatis",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colors.textSecondary,
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Menunggu aplikasi tidak digunakan",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.textSecondary,
+                                        )
+                                    }
+                                    else -> {
+                                        Text(
+                                            text = "Reset otomatis dalam",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colors.textSecondary,
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = formatTimerMmSs(remainingResetMillis),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.accent,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = formatTimerMmSs(remainingSessionMillis),
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
-                        letterSpacing = (-0.5).sp,
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = "Sudah dipakai $usedMinutes menit dari $totalMinutes",
+                        text = if (wasRecentlyAutoReset) {
+                            "Sesi kembali ke durasi awal $totalMinutes menit"
+                        } else {
+                            "Sudah dipakai $usedMinutes menit dari $totalMinutes"
+                        },
                         fontSize = 12.sp,
                         color = colors.textSecondary,
                     )
