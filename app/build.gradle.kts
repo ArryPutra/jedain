@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.jedain"
+    namespace = "com.jedain.app"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.jedain"
+        applicationId = "com.jedain.app"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
