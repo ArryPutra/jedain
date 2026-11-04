@@ -13,3 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Build artifacts & testing tools
+/app/release
+/tools
+*.aab
+*.apks
+*.apk
