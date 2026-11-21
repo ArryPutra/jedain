@@ -1,7 +1,6 @@
 ﻿package com.jedain.app
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -63,9 +62,6 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -114,15 +110,6 @@ enum class JedaInScreen {
 private enum class DisclosurePermissionType {
     USAGE_ACCESS,
     OVERLAY,
-}
-
-const val DISABLE_BUBBLE_CONFIRMATION_PHRASE =
-    "Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama."
-
-fun validateDisableBubbleConfirmationPhrase(input: String): Boolean {
-    val trimmed = input.trim()
-    return trimmed.equals(DISABLE_BUBBLE_CONFIRMATION_PHRASE, ignoreCase = true) ||
-        trimmed.equals(DISABLE_BUBBLE_CONFIRMATION_PHRASE.removeSuffix("."), ignoreCase = true)
 }
 
 // --- Root Screen ---
@@ -304,7 +291,9 @@ fun HomeScreen(
     }
 
     val bubbleController = remember(context) { FloatingBubbleController(context) }
-    var isBubbleEnabled by rememberSaveable { mutableStateOf(bubbleController.isEnabled()) }
+    var isBubbleEnabled by rememberSaveable {
+        mutableStateOf(bubbleController.isEnabled() && PermissionHelper.hasOverlayPermission(context))
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var tickTrigger by remember { mutableLongStateOf(0L) }
@@ -313,12 +302,12 @@ fun HomeScreen(
             delay(1000L)
             if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                 tickTrigger = SystemClock.elapsedRealtime()
+                isBubbleEnabled =
+                    bubbleController.isEnabled() && PermissionHelper.hasOverlayPermission(context)
             }
         }
     }
     var showBreakDurationPicker by rememberSaveable { mutableStateOf(false) }
-    var showDisableBubbleConfirmDialog by rememberSaveable { mutableStateOf(false) }
-    var disableBubbleConfirmationInput by rememberSaveable { mutableStateOf("") }
 
     var hasNotificationPermission by rememberSaveable {
         mutableStateOf(PermissionHelper.hasNotificationPermission(context))
@@ -421,15 +410,27 @@ fun HomeScreen(
                     onNextPromptClick = onNextPromptClick,
                 )
 
-                // Card Izin Aplikasi (jika izin belum lengkap)
-                if (!monitoredAppsUiState.hasUsageAccessPermission ||
+                val hasMissingPermissions = !monitoredAppsUiState.hasUsageAccessPermission ||
                     !monitoredAppsUiState.hasOverlayPermission ||
                     !hasNotificationPermission
-                ) {
+                val hasNoMonitoredApps =
+                    !monitoredAppsUiState.isLoading && monitoredAppsUiState.monitoredCount == 0
+
+                // Card Bubble Mengambang (Paling Atas saat Nonaktif agar user tahu perlu diaktifkan)
+                if (!isBubbleEnabled) {
+                    FloatingBubbleCard(
+                        isEnabled = false,
+                        onCheckedChange = onToggleBubble,
+                    )
+                }
+
+                // Card Persiapan & Izin Aplikasi (jika izin belum lengkap)
+                if (hasMissingPermissions) {
                     PermissionSetupCard(
                         hasUsageAccessPermission = monitoredAppsUiState.hasUsageAccessPermission,
                         hasOverlayPermission = monitoredAppsUiState.hasOverlayPermission,
                         hasNotificationPermission = hasNotificationPermission,
+                        hasMonitoredApps = monitoredAppsUiState.monitoredCount > 0,
                         onRequestUsageAccess = {
                             if (monitoredAppsUiState.hasUsageAccessPermission) {
                                 PermissionHelper.openUsageAccessSettings(context)
@@ -447,6 +448,11 @@ fun HomeScreen(
                         onRequestNotificationPermission = {
                             PermissionHelper.openNotificationSettings(context)
                         },
+                        onManageAppsClick = onManageAppsClick,
+                    )
+                } else if (hasNoMonitoredApps) {
+                    SelectMonitoredAppsPromptCard(
+                        onSelectAppsClick = onManageAppsClick,
                     )
                 }
 
@@ -473,17 +479,13 @@ fun HomeScreen(
                     onAppClick = onAppClick,
                 )
 
-                // Card Bubble Mengambang (Posisi Paling Bawah)
-                FloatingBubbleCard(
-                    isEnabled = isBubbleEnabled,
-                    onCheckedChange = { willEnable ->
-                        if (willEnable) {
-                            onToggleBubble(true)
-                        } else {
-                            showDisableBubbleConfirmDialog = true
-                        }
-                    },
-                )
+                // Card Bubble Mengambang (Posisi Paling Bawah saat Aktif)
+                if (isBubbleEnabled) {
+                    FloatingBubbleCard(
+                        isEnabled = true,
+                        onCheckedChange = onToggleBubble,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -505,22 +507,6 @@ fun HomeScreen(
         )
     }
 
-    if (showDisableBubbleConfirmDialog) {
-        DisableBubbleConfirmationDialog(
-            input = disableBubbleConfirmationInput,
-            onInputChange = { disableBubbleConfirmationInput = it },
-            onConfirm = {
-                showDisableBubbleConfirmDialog = false
-                disableBubbleConfirmationInput = ""
-                onToggleBubble(false)
-            },
-            onDismiss = {
-                showDisableBubbleConfirmDialog = false
-                disableBubbleConfirmationInput = ""
-            },
-        )
-    }
-
     pendingDisclosurePermission?.let { permissionType ->
         PermissionProminentDisclosureDialog(
             permissionType = permissionType,
@@ -538,160 +524,6 @@ fun HomeScreen(
             },
         )
     }
-}
-
-// --- Dialog Konfirmasi Penonaktifan Bubble Mengambang ---
-
-@Composable
-fun DisableBubbleConfirmationDialog(
-    input: String,
-    onInputChange: (String) -> Unit,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val colors = JedaInTheme.colors
-    val isConfirmed = remember(input) {
-        validateDisableBubbleConfirmationPhrase(input)
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
-        containerColor = colors.surface,
-        titleContentColor = colors.textPrimary,
-        textContentColor = colors.textSecondary,
-        title = {
-            Text(
-                text = "Nonaktifkan Bubble Mengambang?",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                // Deskripsi
-                Text(
-                    text = "Jika Bubble dinonaktifkan, sistem pemantauan, countdown, dan sesi jeda JedaIn tidak akan berjalan sampai kamu mengaktifkannya kembali.",
-                    fontSize = 13.sp,
-                    color = colors.textPrimary,
-                    lineHeight = 18.sp,
-                )
-
-                // Penjelasan tambahan
-                Text(
-                    text = "Kamu tidak akan mendapatkan pengingat ketika terlalu lama menggunakan aplikasi yang dipantau.",
-                    fontSize = 13.sp,
-                    color = colors.textSecondary,
-                    lineHeight = 18.sp,
-                )
-
-                // Konfirmasi kesadaran
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(colors.targetCard)
-                        .border(BorderStroke(1.dp, colors.border), RoundedCornerShape(16.dp))
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Sebelum melanjutkan, pahami konsekuensinya.",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
-                    )
-
-                    Text(
-                        text = "Ketik kalimat berikut untuk memastikan kamu memahami konsekuensinya:",
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
-                        lineHeight = 16.sp,
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = colors.background,
-                        border = BorderStroke(1.dp, colors.divider),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = DISABLE_BUBBLE_CONFIRMATION_PHRASE,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(10.dp),
-                            lineHeight = 17.sp,
-                        )
-                    }
-                }
-
-                // Input Text Field
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = onInputChange,
-                    placeholder = {
-                        Text(
-                            text = "Ketik kalimat di atas...",
-                            fontSize = 12.sp,
-                            color = colors.textSecondary.copy(alpha = 0.6f),
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    textStyle = LocalTextStyle.current.copy(
-                        fontSize = 13.sp,
-                        color = colors.textPrimary,
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = if (isConfirmed) colors.durationGreen else colors.accent,
-                        unfocusedBorderColor = colors.border,
-                        focusedContainerColor = colors.surface,
-                        unfocusedContainerColor = colors.surface,
-                        cursorColor = colors.accent,
-                    ),
-                    maxLines = 3,
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = isConfirmed,
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = colors.accent,
-                    contentColor = colors.surface,
-                    disabledContainerColor = colors.border,
-                    disabledContentColor = colors.textSecondary.copy(alpha = 0.5f),
-                ),
-            ) {
-                Text(
-                    text = "Ya, Nonaktifkan",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-            ) {
-                Text(
-                    text = "Batalkan",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.textSecondary,
-                )
-            }
-        },
-    )
 }
 
 // --- Kartu Bubble Mengambang dengan Switch ---
@@ -971,6 +803,93 @@ fun GreetingSection(
 // --- Section 1B: Kartu Status Izin Sistem & Prominent Disclosure ---
 
 @Composable
+private fun SelectMonitoredAppsPromptCard(
+    onSelectAppsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = JedaInTheme.colors
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.border),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = colors.targetCard,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Pilih aplikasi yang dipantau",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = "Belum ada aplikasi yang dipilih",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+
+            Text(
+                text = "Bubble hanya akan muncul saat kamu membuka aplikasi yang dipilih, seperti TikTok, Instagram, atau YouTube.",
+                fontSize = 13.sp,
+                color = colors.textPrimary,
+                lineHeight = 18.sp,
+            )
+
+            Button(
+                onClick = onSelectAppsClick,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.surface,
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+            ) {
+                Text(
+                    text = "Pilih Aplikasi",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun PermissionSetupCard(
     hasUsageAccessPermission: Boolean,
     hasOverlayPermission: Boolean,
@@ -979,6 +898,8 @@ private fun PermissionSetupCard(
     onRequestOverlayPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     modifier: Modifier = Modifier,
+    hasMonitoredApps: Boolean = false,
+    onManageAppsClick: () -> Unit = {},
 ) {
     val colors = JedaInTheme.colors
 
@@ -1016,13 +937,13 @@ private fun PermissionSetupCard(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Izin sistem diperlukan",
+                        text = "Langkah persiapan",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.textPrimary,
                     )
                     Text(
-                        text = "Aktifkan izin berikut agar pemantauan dan pengingat jeda berjalan akurat.",
+                        text = "Lengkapi langkah berikut agar pemantauan dan bubble jeda berjalan akurat.",
                         fontSize = 12.sp,
                         color = colors.textSecondary,
                         lineHeight = 16.sp,
@@ -1055,6 +976,15 @@ private fun PermissionSetupCard(
                 isGranted = hasNotificationPermission,
                 onActionClick = onRequestNotificationPermission,
             )
+
+            PermissionStatusRow(
+                icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                title = "Aplikasi yang Dipantau",
+                subtitle = "Pilih aplikasi seperti TikTok atau Instagram agar bubble muncul saat dibuka",
+                isGranted = hasMonitoredApps,
+                onActionClick = onManageAppsClick,
+                actionLabel = "Pilih",
+            )
         }
     }
 }
@@ -1067,6 +997,7 @@ private fun PermissionStatusRow(
     isGranted: Boolean,
     onActionClick: () -> Unit,
     modifier: Modifier = Modifier,
+    actionLabel: String = "Izinkan",
 ) {
     val colors = JedaInTheme.colors
 
@@ -1152,7 +1083,7 @@ private fun PermissionStatusRow(
                 modifier = Modifier.height(34.dp),
             ) {
                 Text(
-                    text = "Izinkan",
+                    text = actionLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -1982,13 +1913,11 @@ private fun FloatingBubbleCardPreview() {
 
 @Preview(showBackground = true)
 @Composable
-private fun DisableBubbleConfirmationDialogPreview() {
+private fun SelectMonitoredAppsPromptCardPreview() {
     JedaInTheme {
-        DisableBubbleConfirmationDialog(
-            input = "",
-            onInputChange = {},
-            onConfirm = {},
-            onDismiss = {},
+        SelectMonitoredAppsPromptCard(
+            onSelectAppsClick = {},
+            modifier = Modifier.padding(16.dp),
         )
     }
 }

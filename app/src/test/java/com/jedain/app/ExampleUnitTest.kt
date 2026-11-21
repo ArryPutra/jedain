@@ -921,47 +921,6 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun disableBubbleConfirmationPhrase_validationRules() {
-        val target = DISABLE_BUBBLE_CONFIRMATION_PHRASE
-        assertEquals(
-            "Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama.",
-            target,
-        )
-
-        // 1. Exact match with trailing period
-        assertTrue(validateDisableBubbleConfirmationPhrase(target))
-
-        // 2. Match without trailing period
-        assertTrue(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama"))
-
-        // 3. Case insensitivity
-        assertTrue(validateDisableBubbleConfirmationPhrase(target.lowercase()))
-        assertTrue(validateDisableBubbleConfirmationPhrase(target.uppercase()))
-        assertTrue(validateDisableBubbleConfirmationPhrase("saya sadar bahwa tanpa pemantauan, kebiasaan scrolling saya bisa berlangsung lebih lama."))
-
-        // 4. Leading and trailing whitespace trimming
-        assertTrue(validateDisableBubbleConfirmationPhrase("   $target   "))
-        assertTrue(validateDisableBubbleConfirmationPhrase("\n\t$target\n"))
-
-        // 5. Partial text matches fail (must NOT match partially)
-        assertFalse(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa"))
-        assertFalse(validateDisableBubbleConfirmationPhrase("Saya sadar bahwa tanpa pemantauan"))
-        assertFalse(validateDisableBubbleConfirmationPhrase("kebiasaan scrolling saya bisa berlangsung lebih lama."))
-
-        // 6. Empty / blank string
-        assertFalse(validateDisableBubbleConfirmationPhrase(""))
-        assertFalse(validateDisableBubbleConfirmationPhrase("   "))
-
-        // 7. Unrelated text
-        assertFalse(validateDisableBubbleConfirmationPhrase("Nonaktifkan saja"))
-        assertFalse(validateDisableBubbleConfirmationPhrase("Ya"))
-
-        // 8. Superstring / extra words appended or prepended
-        assertFalse(validateDisableBubbleConfirmationPhrase("$target Dan saya mengerti"))
-        assertFalse(validateDisableBubbleConfirmationPhrase("Konfirmasi: $target"))
-    }
-
-    @Test
     fun sessionDurationSelectionUX_rulesAndAutoSelect() {
         // 1. Verifikasi hanya ada 4 pilihan durasi (5, 10, 15, dan Atur sendiri)
         val fixedPresets = listOf(5, 10, 15)
