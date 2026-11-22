@@ -16,6 +16,7 @@ local.properties
 
 # Build artifacts & testing tools
 /app/release
+/release
 /tools
 *.aab
 *.apks
